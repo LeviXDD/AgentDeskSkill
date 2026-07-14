@@ -1,0 +1,12 @@
+{
+  "schema_version": "agentdesk.tasks/v2",
+  "project_id": "{{PROJECT_ID}}",
+  "adoption_level": "{{MODE}}",
+  "updated_at": "{{DATE}}",
+  "pm_control": {
+    "holder_id": "{{PM_HOLDER_ID}}",
+    "lease_epoch": 1,
+    "mode": "{{LEASE_MODE}}"
+  },
+  "tasks": []
+}

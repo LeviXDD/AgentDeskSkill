@@ -1,0 +1,94 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11"]
+    env:
+      SKILL_DIR: skills/agentdesk
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Validate Skill structure
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          skill = Path(os.environ["SKILL_DIR"])
+          expected_name = "agentdesk"
+          required = (
+              skill / "SKILL.md",
+              skill / "agents" / "openai.yaml",
+              skill / "assets",
+              skill / "references",
+              skill / "scripts",
+          )
+          missing = [path.as_posix() for path in required if not path.exists()]
+          if missing:
+              raise SystemExit("Missing required Skill paths: " + ", ".join(missing))
+          if skill.name != expected_name:
+              raise SystemExit(f"Skill folder must be named {expected_name!r}")
+          if (skill / "README.md").exists():
+              raise SystemExit("README.md belongs at the repository root, not in the Skill")
+
+          lines = (skill / "SKILL.md").read_text(encoding="utf-8").splitlines()
+          if not lines or lines[0] != "---":
+              raise SystemExit("SKILL.md must start with YAML frontmatter")
+          try:
+              end = lines.index("---", 1)
+          except ValueError as exc:
+              raise SystemExit("SKILL.md frontmatter is not closed") from exc
+
+          fields = {}
+          for line in lines[1:end]:
+              match = re.fullmatch(r"([a-z][a-z0-9_-]*):\s*(.+)", line)
+              if not match:
+                  raise SystemExit(f"Unsupported frontmatter line: {line!r}")
+              key, value = match.groups()
+              if key in fields:
+                  raise SystemExit(f"Duplicate frontmatter key: {key}")
+              fields[key] = value.strip()
+
+          if set(fields) != {"name", "description"}:
+              raise SystemExit("SKILL.md frontmatter must contain only name and description")
+          name = fields["name"].strip("'\"")
+          description = fields["description"].strip("'\"").strip()
+          if name != expected_name:
+              raise SystemExit(f"Frontmatter name must be {expected_name!r}, got {name!r}")
+          if len(name) > 64 or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+              raise SystemExit("Skill name must be <=64 lowercase letters, digits, and hyphens")
+          if not description:
+              raise SystemExit("Skill description must not be empty")
+          if not any((skill / "scripts").glob("*.py")):
+              raise SystemExit("Skill scripts directory contains no Python scripts")
+          print(f"Validated {skill}")
+          PY
+
+      - name: Compile Python scripts
+        shell: bash
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/agentdesk-pycache
+        run: find "$SKILL_DIR/scripts" -type f -name '*.py' -exec python -m py_compile {} +
+
+      - name: Run repository tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v

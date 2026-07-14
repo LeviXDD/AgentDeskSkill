@@ -1,0 +1,35 @@
+{
+  "schema_version": "agentdesk.role-policies/v1",
+  "tier_order": ["basic", "standard", "advanced", "expert"],
+  "deliberation_tier_order": ["efficient", "balanced", "deep"],
+  "risk_floors": {
+    "L0": "basic",
+    "L1": "standard",
+    "L2": "advanced",
+    "L3": "expert",
+    "L4": "expert"
+  },
+  "roles": {
+    "PM": {
+      "default_tier": "advanced",
+      "minimum_tier": "advanced",
+      "deliberation_tier": "deep",
+      "required_capabilities": ["planning", "architecture", "code_review", "risk_assessment"],
+      "degradation_policy": "block"
+    },
+    "DEV": {
+      "default_tier": "standard",
+      "minimum_tier": "standard",
+      "deliberation_tier": "balanced",
+      "required_capabilities": ["coding", "testing"],
+      "degradation_policy": "allow_to_minimum"
+    },
+    "QA": {
+      "default_tier": "advanced",
+      "minimum_tier": "standard",
+      "deliberation_tier": "deep",
+      "required_capabilities": ["test_design", "adversarial_review"],
+      "degradation_policy": "require_pm_approval"
+    }
+  }
+}

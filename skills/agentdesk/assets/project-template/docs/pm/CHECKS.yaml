@@ -1,0 +1,10 @@
+schema_version: agentdesk.check-catalog/v1
+checks: {}
+
+# Add trusted checks as argv arrays. Example:
+# checks:
+#   project.test:
+#     argv: ["python3", "-m", "pytest"]
+#     workdir: "."
+#     network: false
+#     timeout_seconds: 1200

@@ -1,0 +1,18 @@
+{
+  "schema_version": "agentdesk.routes/v2",
+  "updated_at": null,
+  "routes": {
+    "PM": {
+      "role_no": "PM",
+      "role_name": "项目经理",
+      "expected_title": "PM . 项目经理",
+      "transport": "codex",
+      "host_id": null,
+      "thread_id": null,
+      "actual_title": null,
+      "worktree": null,
+      "status": "unbound",
+      "verified_at": null
+    }
+  }
+}

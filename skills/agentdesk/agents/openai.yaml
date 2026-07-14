@@ -1,0 +1,4 @@
+interface:
+  display_name: "AgentDesk · 多 Agent 软件开发编排"
+  short_description: "以独立岗位任务、主动回调和可验证证据编排软件交付"
+  default_prompt: "Use $agentdesk to operate this repository with verified independently named role tasks, proactive worker callbacks, PM acceptance, and repository plus runtime closure validation."
