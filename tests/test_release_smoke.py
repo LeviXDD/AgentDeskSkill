@@ -31,6 +31,20 @@ def run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]
     )
 
 
+def tracked_skill_files() -> list[Path]:
+    result = run(
+        "git",
+        "ls-files",
+        "-z",
+        "--",
+        SKILL_ROOT.relative_to(REPO_ROOT).as_posix(),
+        cwd=REPO_ROOT,
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stdout)
+    return [REPO_ROOT / value for value in result.stdout.split("\0") if value]
+
+
 class ReleaseSmokeTests(unittest.TestCase):
     def test_repository_release_files_and_install_command(self) -> None:
         for relative in (
@@ -98,9 +112,10 @@ class ReleaseSmokeTests(unittest.TestCase):
             self.assertTrue((SKILL_ROOT / relative).is_file(), relative)
 
         self.assertFalse((SKILL_ROOT / "README.md").exists())
-        for path in SKILL_ROOT.rglob("*"):
+        for path in tracked_skill_files():
             self.assertFalse(path.is_symlink(), str(path))
-            self.assertNotIn(path.name, {".DS_Store", "__pycache__"})
+            self.assertNotIn("__pycache__", path.parts)
+            self.assertNotEqual(path.name, ".DS_Store")
             self.assertNotEqual(path.suffix, ".pyc")
 
     def test_public_snapshot_contains_no_obvious_private_material(self) -> None:
@@ -113,9 +128,7 @@ class ReleaseSmokeTests(unittest.TestCase):
             re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
             re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
         )
-        for path in SKILL_ROOT.rglob("*"):
-            if not path.is_file():
-                continue
+        for path in tracked_skill_files():
             content = path.read_text(encoding="utf-8")
             for pattern in patterns:
                 self.assertIsNone(pattern.search(content), f"{pattern.pattern}: {path}")

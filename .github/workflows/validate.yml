@@ -16,6 +16,7 @@ jobs:
         python-version: ["3.9", "3.11"]
     env:
       SKILL_DIR: skills/agentdesk
+      PYTHONDONTWRITEBYTECODE: "1"
 
     steps:
       - name: Check out repository
