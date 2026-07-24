@@ -12,20 +12,62 @@
 
 ## 安装
 
-安装公开 beta 的固定版本：
+当前公开 beta 是 `v0.2.0-beta`。从固定 tag 构建并激活可验证只读发布包：
 
 ```bash
-python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo LeviXDD/AgentDeskSkill \
-  --path skills/agentdesk \
-  --ref v0.1.0-beta
+(
+  set -eu
+
+  release_tag="v0.2.0-beta"
+  repo_dir="AgentDeskSkill-$release_tag"
+  release_dir="$HOME/.local/share/agentdesk/releases/$release_tag"
+  codex_home="${CODEX_HOME:-$HOME/.codex}"
+  install_link="$codex_home/skills/agentdesk"
+
+  test ! -e "$repo_dir"
+  test ! -L "$repo_dir"
+  test ! -e "$release_dir"
+  test ! -L "$release_dir"
+
+  if { [ -e "$install_link" ] && [ ! -L "$install_link" ]; } ||
+     { [ -L "$install_link" ] && [ ! -e "$install_link" ]; }; then
+    echo "STOP: back up or repair $install_link before activation" >&2
+    exit 1
+  fi
+
+  git clone --depth 1 --branch "$release_tag" \
+    https://github.com/LeviXDD/AgentDeskSkill.git \
+    "$repo_dir"
+  cd "$repo_dir"
+  test "$(git describe --tags --exact-match HEAD)" = "$release_tag"
+
+  env PYTHONDONTWRITEBYTECODE=1 \
+    python3 -m unittest discover -s tests -p 'test_*.py'
+  test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+  python3 tools/build_skill_release.py \
+    --source skills/agentdesk \
+    --destination "$release_dir" \
+    --release-id "$release_tag"
+
+  python3 tools/activate_skill_release.py \
+    --release-directory "$release_dir" \
+    --install-link "$install_link" \
+    --expected-release "$release_tag" \
+    --dry-run
+
+  python3 tools/activate_skill_release.py \
+    --release-directory "$release_dir" \
+    --install-link "$install_link" \
+    --expected-release "$release_tag"
+)
 ```
 
-这条命令安装的是旧版公开基线。`v0.1.0-beta` 尚不包含版本锁、不可变发布包和圆桌
-咨询；本页后续涉及这些能力的说明适用于下一版本候选。候选源码目录只能用于审阅、
-测试和只读影子校验，不能直接作为生产写入版本。需要试用候选版时，先按
-[公开分享与平台兼容](10-sharing-and-portability.md#构建并激活下一版本)从固定 commit
-构建只读发布包。
+不要把通用 Skill installer 当成 `v0.2.0-beta` 的可写安装器：tag 中的源码清单
+刻意保持 development 身份，复制后目录也仍可写，因此只能用于审阅、测试和只读
+影子校验。如果 `~/.codex/skills/agentdesk` 已经是 `v0.1.0-beta` 留下的普通目录，
+激活器会拒绝覆盖；先按[公开分享与平台兼容](10-sharing-and-portability.md#从-v010-beta-升级安装)
+备份并移出 Skill discovery，再执行激活。
 
 安装后重新打开或刷新 Codex，确认 Skill 列表中出现 `$agentdesk`。如果本机仍显示旧名称 `$task-card-agent-dev`，不要同时让两个版本操作同一个项目；先完成旧名称迁移，见[公开分享与平台兼容](10-sharing-and-portability.md)。
 

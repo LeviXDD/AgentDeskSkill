@@ -157,6 +157,10 @@ python3 tools/activate_skill_release.py \
 
 ## 当前仓库的版本状态
 
+- `v0.2.0-beta` 是当前公开 beta；它的 Git tag 固定源码 commit，正式写入安装必须
+  从该 tag 构建 release ID 同名的只读 bundle；
+- tag 内的 `0.2.0-dev` / `development` 清单是防伪门禁，不表示公开版本仍未发布；
+  通用 Skill installer 或 GitHub 自动生成的源码压缩包都不会把它变成 Stable；
 - `v0.1.0-beta` 属于没有项目锁的历史发布，现有项目按 `legacy-unpinned` 处理；
-- `0.2.0-dev` 是版本隔离候选，不应作为已验证发布包投入项目写入；
-- 只有发布清单中的 `source_commit` 与 `bundle_sha256` 均由正式打包流程写入后，候选包才具备通过写门禁的基础。
+- 只有构建产物清单中的 `source_commit` 与 `bundle_sha256` 均由正式打包流程写入，
+  且目录保持只读时，该 bundle 才具备通过写门禁的基础。
