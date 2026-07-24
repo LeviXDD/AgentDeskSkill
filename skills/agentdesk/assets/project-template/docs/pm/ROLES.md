@@ -13,3 +13,17 @@
 `expected_thread_title` is derived exactly as `<role_no> . <role_name>` with one ASCII space on each side of the period. It is the required visible title, not a suggestion.
 
 Activate only the roles the project needs. A role describes responsibility, not a model or tool vendor. Every Active worker role must have a real session distinct from the PM and from every other worker, with an exact verified title and a local binding in gitignored `.agentdesk/runtime/routes.yaml`. A worktree alone does not satisfy this requirement. The Project Leader owns vendor-neutral execution requirements in `ROLE-POLICIES.yaml`; local provider/model availability belongs in gitignored `.agentdesk/runtime/model-bindings.yaml`.
+
+## Consultation Seats Are Not Roles
+
+Do not add temporary roundtable or advisory seats to the role table above. Consultation seats are scoped to one `Cnnn` topic, remain read-only, have no task-card, implementation, QA, acceptance, integration, merge, release, deployment, credential, or control-plane authority, and may not create more sessions.
+
+Their visible titles use a separate formula:
+
+```text
+<consultation_id>.<seat_no> . <seat_name>｜<short_topic>
+```
+
+For example, `C001.01 . 产品顾问｜会员权益`. Consultation identity and vendor-neutral model requirements belong in `docs/pm/consultations/<consultation_id>/consultation.yaml`; real thread IDs, observed titles, prompt/callback IDs, model routing, and transport receipts stay in gitignored `.agentdesk/runtime/consultations.yaml`.
+
+A consultation session never satisfies the independent worker-session requirement. If a confirmed consultation outcome becomes executable work, create a normal task card and pass the ordinary role activation and visible worker-session authorization gates separately.

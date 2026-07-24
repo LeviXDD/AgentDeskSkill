@@ -19,6 +19,29 @@ Before creating the first worker session for a new or existing project:
 
 Initializing this control plane, creating cards, or receiving a general instruction such as “start development” does not prove that role sessions exist and does not waive this gate. Adopting the Skill in an already-developed repository uses the same gate before its first new-feature dispatch.
 
+## Consultation Gate
+
+Consultation is a separate read-only coordination path. It does not use `tasks.yaml`, execution dispatches, worker routes, delivery reports, acceptance, or integration state. A consultation seat is not an Active role and must not be added to `ROLES.md`.
+
+Before creating any consultation session:
+
+1. Decide whether another perspective will materially improve the result. Use the smallest useful set: one seat for one specialist gap, two for a real trade-off, and three only for a high-risk or cross-domain question. Never exceed three seats.
+2. Freeze one exact topic, a short topic label, the discussion boundary, one distinct focus per seat, and a round limit of one or two.
+3. Propose every exact visible title using `<consultation_id>.<seat_no> . <seat_name>｜<short_topic>`; for example `C001.01 . 产品顾问｜会员权益`.
+4. Discover whether the host can create, rename, read/list, message, and wait for independently visible sessions, and whether those sessions can proactively message the initiating Leader task. Capability discovery is read-only and is not creation authorization.
+5. Obtain `explicit_batch` authorization for the exact titles, or an explicitly granted `scoped_auto` authorization bounded to this exact topic, maximum visible-session count, maximum two rounds, and read-only operation. `scoped_auto.authorized_titles` may be empty only when the User / Owner explicitly delegated seat selection within those bounds; when non-empty it must exactly match the created titles. General approval to analyze, initialize, develop, or upgrade the Skill is not sufficient.
+6. Persist `docs/pm/consultations/<consultation_id>/consultation.yaml` first as `awaiting_authorization` with null authorization, planned seats, and no rounds. After authorization, record its stable `CA-*` ID and exact bounds. Never include host IDs, thread IDs, absolute local paths, live callback IDs, receipts, provider routing, credentials, or tokens. Public response `callback_id` fields remain `null`; stable `response_id` values use `<seat_id>.R<round>`.
+7. Create all approved seats with a read-only bootstrap, set their exact titles, and read/list them back. Store real routes and transport facts only in gitignored `.agentdesk/runtime/consultations.yaml`.
+8. Send the same immutable Round 1 brief to all seats, with only the declared seat focus added. Do not reveal another seat's response before Round 1 closes.
+9. Require every seat to send a structured proactive callback to the delegation source. Seats may not message one another, create sessions, change files, make commits, alter control state, execute implementation, accept work, merge, release, deploy, or cause external side effects.
+10. Use Round 2 only for a material disagreement that could change the recommendation, only when the original authorization permits it, and only with the same seats. There is no Round 3.
+11. Synthesize consensus, conditional consensus, disagreements, minority views, assumptions, residual risks, and the Leader recommendation. Do not use majority vote as the decision rule, and disclose missing seats or callback degradation.
+12. Present the synthesis as `proposed` and obtain an explicit User / Owner confirmation for an exact scope. Only a confirmed scope may produce a decision-log row or task card. Cite consultation/confirmation IDs in the decision row; put `source_consultation_id` and `source_confirmation_id` in a derived task card and list that path in `derived_refs`. Then pass the ordinary execution role, visible-session, dispatch, acceptance, integration, merge, release, and deployment gates separately.
+
+If proactive callback is unavailable but bounded wait/read is available, it may recover an answer only as a disclosed polled fallback. It does not prove the proactive callback loop. If independent session creation, exact naming, verification, or safe read-only operation is unavailable, stop or obtain explicit agreement for a clearly labelled conversation-only/Lite alternative; do not claim the full consultation loop.
+
+Consultation seats may have vendor-neutral `minimum_tier`, `deliberation_tier`, and `required_capabilities`, but do not assume `create_thread` can enforce them. Do not override the host model merely because the consultation record contains a tier when the User / Owner did not select a concrete model. Record the local `model_binding` as default/override unverified unless the host provides actual-model evidence; model evidence stays runtime-only.
+
 ## Start
 
 1. Confirm the logical PM holder and `lease_epoch`.

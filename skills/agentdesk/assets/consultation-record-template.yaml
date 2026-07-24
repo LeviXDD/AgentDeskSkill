@@ -1,0 +1,59 @@
+{
+  "schema_version": "agentdesk.consultation/v1",
+  "consultation_id": "C001",
+  "topic": "<full-topic>",
+  "short_topic": "<short-topic>",
+  "state": "awaiting_authorization",
+  "created_at": "<RFC3339-UTC>",
+  "updated_at": "<RFC3339-UTC>",
+  "cancellation_reason": null,
+  "creation_authorization": null,
+  "seat_count": 2,
+  "round_limit": 2,
+  "seats": [
+    {
+      "seat_no": "01",
+      "seat_id": "C001.01",
+      "seat_name": "产品顾问",
+      "expected_thread_title": "C001.01 . 产品顾问｜<short-topic>",
+      "focus": "<independent-product-perspective>",
+      "model_requirement": {
+        "minimum_tier": "standard",
+        "deliberation_tier": "balanced",
+        "required_capabilities": [
+          "analysis"
+        ]
+      },
+      "status": "planned"
+    },
+    {
+      "seat_no": "02",
+      "seat_id": "C001.02",
+      "seat_name": "技术顾问",
+      "expected_thread_title": "C001.02 . 技术顾问｜<short-topic>",
+      "focus": "<independent-technical-perspective>",
+      "model_requirement": {
+        "minimum_tier": "advanced",
+        "deliberation_tier": "deep",
+        "required_capabilities": [
+          "analysis"
+        ]
+      },
+      "status": "planned"
+    }
+  ],
+  "rounds": [],
+  "synthesis_path": null,
+  "outcome_status": "none",
+  "confirmation": {
+    "confirmation_id": null,
+    "status": "pending",
+    "confirmed_by": null,
+    "confirmed_scope": [],
+    "recorded_at": null
+  },
+  "derived_refs": {
+    "decision_ids": [],
+    "task_card_paths": []
+  }
+}

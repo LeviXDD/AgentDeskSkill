@@ -31,6 +31,7 @@ REQUIRED_DIRECTORIES = (
     Path("docs/pm/tasks"),
     Path("docs/pm/reports"),
     Path("docs/pm/acceptances"),
+    Path("docs/pm/consultations"),
     Path("docs/pm/events"),
     Path("docs/pm/outbox"),
     Path(".agentdesk/runtime"),

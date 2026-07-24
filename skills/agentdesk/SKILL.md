@@ -1,6 +1,6 @@
 ---
 name: agentdesk
-description: "Initialize, operate, validate, and recover task-card-driven multi-agent software projects. Use when Codex needs to scaffold or upgrade a medium or large repository for PM-coordinated development with real independently named role tasks, vendor-neutral model policies, task cards, dedicated worktrees, proactive callbacks, transport receipts, acceptance, integration gates, or repository/runtime closure validation; or when acting as the PM, developer, QA, integration, validation, or recovery role."
+description: "Initialize, consult on, operate, validate, and recover task-card-driven multi-agent software projects. Use when Codex needs a bounded multi-session roundtable for a complex topic, product, architecture, risk, or requirements question—including a topic outside a repository—or needs to scaffold or upgrade a repository for PM-coordinated delivery with independently named role tasks, model policies, task cards, dedicated worktrees, proactive callbacks, acceptance, integration gates, and repository/runtime validation."
 ---
 
 # AgentDesk
@@ -26,18 +26,21 @@ PM/Leader task
 
 Repository records make this loop recoverable; they do not substitute for creating, addressing, or messaging the real tasks.
 
+When a question needs competing viewpoints before execution, AgentDesk can prepend a bounded consultation loop: one Leader opens one to three read-only consultation tasks, collects independent first-round callbacks, optionally runs one cross-check round, synthesizes disagreements, and asks the Owner to confirm what—if anything—becomes a decision or task card. Consultation is advisory and never substitutes for the execution loop above.
+
 Automate coordination, not authority. Keep product decisions, risky approvals, merging, and release behind their declared gates.
 
 ## Resolve The Requested Mode
 
-Choose one mode from the request and repository state:
+Choose the primary mode from the request and repository state. `Consultation` may precede `PM`, but its output does not silently enter execution:
 
 1. **Initialize** — scaffold or upgrade a project workflow.
-2. **PM** — clarify requirements, configure roles, create and dispatch cards, review deliveries, update state, and unlock dependencies.
-3. **Worker** — implement one assigned card inside its scope and produce a delivery report.
-4. **QA / Integration** — test a frozen candidate or combine accepted commits under a dedicated card.
-5. **Validate** — check project structure and state without changing business code.
-6. **Recover** — reconcile conflicting state, lost callbacks, stale revisions, expired leases, or invisible Git evidence.
+2. **Consultation** — open zero to three bounded, read-only advisory tasks around one topic, collect their callbacks, synthesize, and request Owner confirmation.
+3. **PM** — clarify requirements, configure roles, create and dispatch cards, review deliveries, update state, and unlock dependencies.
+4. **Worker** — implement one assigned card inside its scope and produce a delivery report.
+5. **QA / Integration** — test a frozen candidate or combine accepted commits under a dedicated card.
+6. **Validate** — check project structure and state without changing business code.
+7. **Recover** — reconcile conflicting state, lost callbacks, stale revisions, expired leases, or invisible Git evidence.
 
 Do not silently combine PM and worker authority. In `standard` and `automated`, a worker must run in a real task distinct from the PM/Leader task. Never satisfy this requirement by changing personas in the PM task, by creating only a worktree, or by recording a placeholder thread ID.
 
@@ -52,12 +55,13 @@ Read only what the active mode requires:
 - Read [references/events-outbox-and-validation.md](references/events-outbox-and-validation.md) before creating or editing an event, outbox message, runtime route, callback, or validator rule.
 - Read [references/runbooks-and-recovery.md](references/runbooks-and-recovery.md) for PM/worker/QA/integration procedures, risk approvals, heartbeat, migration, or any failure recovery.
 - Read [references/codex-runtime-adapter.md](references/codex-runtime-adapter.md) before creating, renaming, verifying, dispatching to, or calling back a Codex task. Follow its low-freedom tool order and receipt rules exactly.
+- Read [references/consultation-protocol.md](references/consultation-protocol.md) before proposing, authorizing, creating, messaging, synthesizing, validating, or recovering consultation tasks. Use its separate advisory identities, records, runtime receipts, and confirmation gate; do not reuse Worker dispatch semantics.
 
 Do not load all references by default. The repository and current task card remain the primary task-local context.
 
 ## Non-Negotiable Invariants
 
-- Treat `docs/pm/state/tasks.yaml` as the only authority for current orchestration state.
+- Treat `docs/pm/state/tasks.yaml` as the only authority for current **execution-task** orchestration state.
 - Treat a versioned task card as the only authority for that revision's work specification.
 - Let only the current logical PM lease holder modify control-plane state.
 - Let roles modify business paths plus their exact assigned `report_path`; keep other control-plane files read-only.
@@ -71,6 +75,10 @@ Do not load all references by default. The repository and current task card rema
 - Give every Active role one stable `role_no`, `role_id`, and `role_name`; require the real task title to equal `<role_no> . <role_name>` byte-for-byte.
 - In Standard and Automated, bind every active dispatch to a verified, independently visible role task and dedicated worktree. A route is usable only when the real thread exists, its actual title matches the expected title, its host/worktree are reachable, and the PM callback route is independently verified.
 - Treat explicit authorization for creating a new user-visible task as a precondition, not something implied by project initialization or development approval.
+- Keep consultation records under `docs/pm/consultations/CNNN/` and consultation runtime facts under gitignored `.agentdesk/runtime/consultations.yaml`; never insert consultation seats into `tasks.yaml`, Active roles, Worker routes, or execution receipts.
+- Limit a consultation to one topic, one to three read-only seats, an independent first round, and at most one cross-check round. Seats cannot modify code/control-plane state, exercise PM/acceptance authority, contact each other directly, or create more tasks.
+- Require topic-bounded authorization before creating visible consultation tasks, exact titles in the form `<consultation_id>.<seat_no> . <seat_name>｜<short_topic>`, verified task identity, and proactive callbacks to the Leader source task.
+- Treat consultation output as advice. Only an explicit Owner confirmation may produce a durable decision or candidate task card, and that confirmation never implies authorization to create execution tasks, implement, merge, deploy, or release.
 - Require the worker to proactively callback the delegation `source_thread_id`, cross-check it against the verified PM route, and persist a transport receipt before claiming its task lifecycle complete. Heartbeat is only the fallback for a failed or lost primary callback.
 - Freeze role policy at `task_card_commit`; freeze the selected provider/model snapshot in dispatch and delivery evidence.
 - Treat model selection as a dispatch guard, not a model launcher. If the runtime cannot honor the exact selected binding and deliberation tier, do not dispatch.
@@ -123,6 +131,7 @@ After scaffolding:
 5. Register trusted check IDs and argv arrays in `docs/pm/CHECKS.yaml`.
 6. Record durable decisions in `DECISIONS.md`; do not use it as a status log.
 7. Keep `tasks.yaml` empty until requirements and the first task card are concrete.
+8. If consultations are enabled, review `docs/pm/CONSULTATION-POLICY.yaml`; keep its V1 caps at no more than three seats and two rounds, with read-only seats, no recursive task creation, and Owner confirmation required before derivation.
 
 Never dispatch to an unconfirmed role or invent production credentials, external approvals, or release authority.
 
@@ -159,6 +168,8 @@ python3 <skill-dir>/scripts/validate_project.py --project <repo>
 python3 <skill-dir>/scripts/render_views.py --project <repo> --check
 ```
 
+When `CONSULTATION-POLICY.yaml` or consultation records are present, also run `python3 <skill-dir>/scripts/validate_consultations.py --project <repo>`. This validates the advisory record and artifacts; it does not replace live task/title/transport verification.
+
 `--pre-commit` performs structural checks on a proposed snapshot and warns because it cannot prove commit atomicity while control-plane files differ from `HEAD`. After it passes, inspect the diff and commit only the scoped workflow files; never sweep unrelated existing changes into the commit. Final strict validation omits both `--pre-commit` and `--allow-legacy-model-evidence`, and proves canonical state, generated views, acceptance records, and dispatch event/outbox evidence match committed Git history. If the session is not authorized to commit an existing repository, stop with final strict validation pending rather than claiming initialization is complete.
 
 `--allow-legacy-model-evidence` is only a migration-audit escape hatch for legacy terminal records. Its warnings are never a strict pass and must never drive automatic acceptance or dispatch.
@@ -166,6 +177,30 @@ python3 <skill-dir>/scripts/render_views.py --project <repo> --check
 Do not claim initialization is complete while final strict validation reports errors.
 
 The bundled validator reconciles ledger state with committed event/outbox evidence, including ID uniqueness, first-dispatch commit atomicity, raw outbox digest, model snapshot parity, and degradation approval linkage. It does not prove a provider execution receipt, the completeness of dispatch guards, the semantic safety of `CHECKS.yaml`, or the actual implementation diff/path scope; use the full Validator / CI checklist in [references/runbooks-and-recovery.md](references/runbooks-and-recovery.md) before dispatch or acceptance.
+
+## Consultation Workflow
+
+Use this workflow only for decision support. Read [the consultation protocol](references/consultation-protocol.md) before acting.
+
+1. Frame one decision topic, its Owner, known facts, constraints, non-goals, and what evidence could change the conclusion. If the Leader can answer reliably without another perspective, use zero seats and continue in the current task without creating a consultation record. If the user explicitly requests independent or multi-session perspectives, do not silently collapse that request to zero seats: propose the smallest meaningful panel and stop at the visible-task authorization gate.
+2. Size the roundtable: one seat for a single specialist gap, two for a genuine alternative or trade-off, and three only for material cross-domain or high-impact disagreement. V1 never creates more than three seats or more than two rounds.
+3. Allocate a non-reused `C001`-style ID, derive `C001.01`-style seat IDs, and draft the shared brief from [assets/consultation-brief-template.md](assets/consultation-brief-template.md). In an AgentDesk project, record the plan with the safe pre-authorization defaults in [assets/consultation-record-template.yaml](assets/consultation-record-template.yaml): `state: awaiting_authorization`, null authorization, planned seats, and no rounds. After authorization, insert the real authorization ID, then freeze and digest the brief before sending. For a topic outside a project, use the protocol's conversation-only mode and do not claim Git-backed audit or recovery. Keep runtime task IDs out of Git.
+4. Before creating visible tasks, present the topic, seat count, exact titles, focus, round cap, access boundary, and model recommendation. Obtain authorization bounded to this consultation. A user's explicit instruction naming the exact batch is sufficient; a request to use AgentDesk, analyze deeply, initialize, or develop is not standing authorization.
+5. Create one real task per authorized seat, set and read back the exact title `<consultation_id>.<seat_no> . <seat_name>｜<short_topic>`, and verify that every seat and the Leader source are distinct and reachable. Consultation seats are read-only and do not need Worker worktrees. Persist task identities, title attestations, prompt receipts, and response receipts only in `.agentdesk/runtime/consultations.yaml`.
+6. Send every seat the same first-round brief digest plus only its declared focus. Do not expose another seat's response before all first-round callbacks are collected or marked missing/blocked. Each seat must proactively callback the Leader source task; a final answer left only in the seat task is not a callback.
+7. Open a second round only when a material disagreement could change the decision. Reuse the same seats, relay a neutral or anonymized disagreement summary through the Leader, and do not add seats, allow direct seat-to-seat messaging, or create a third round.
+8. Persist Round 1 responses with [assets/consultation-response-template.md](assets/consultation-response-template.md) and optional Round 2 responses with [assets/consultation-response-r2-template.md](assets/consultation-response-r2-template.md), then synthesize with [assets/consultation-synthesis-template.md](assets/consultation-synthesis-template.md). Separate consensus, conditional consensus, disagreement, minority views, assumptions, confidence, and unresolved Owner questions; never decide by vote count.
+9. Ask the Owner to confirm, reject, or defer the proposed outcome. Only a confirmed scope may be recorded in `DECISIONS.md` or used to draft a task card. A derived decision row must cite the consultation and confirmation IDs; a derived task card must carry `source_consultation_id` plus `source_confirmation_id` and be listed in the consultation's `derived_refs`. Creating execution-role tasks, implementing, accepting, merging, deploying, and releasing remain separately gated actions.
+10. In a project-backed consultation, render and validate the advisory control plane when present:
+
+   ```bash
+   python3 <skill-dir>/scripts/render_views.py --project <repo>
+   python3 <skill-dir>/scripts/validate_consultations.py --project <repo>
+   ```
+
+   The default command validates the public consultation lifecycle and artifacts. Once any visible seat has actually been created, also run `validate_consultations.py --project <repo> --require-runtime`, then read/list the current provider tasks to re-verify the Leader route, distinct seat routes, exact titles, and callback delivery. Neither stored runtime evidence nor a passing validator replaces that live check.
+
+Consultation model requirements are vendor-neutral recommendations. Do not run the execution `select_model.py` for a consultation seat. Pass an exact runtime model override only when the user explicitly requests that exact model and the active host supports it; otherwise omit the override and disclose the runtime/default binding as unverified when it cannot be observed. Model strength never expands seat authority.
 
 ## PM Workflow
 
@@ -232,6 +267,6 @@ Read [references/runbooks-and-recovery.md](references/runbooks-and-recovery.md) 
 
 ## Required Handoff
 
-Report the mode used, files created or changed, task/state IDs, branch and commits, commands run, validation result, deviations, blockers, and the next safe action. For Standard/Automated runtime work, also report the logical role/title, whether the real PM and role routes were verified, and the dispatch/callback receipt IDs without exposing credentials.
+Report the mode used, files created or changed, task/state IDs, branch and commits, commands run, validation result, deviations, blockers, and the next safe action. For Standard/Automated runtime work, also report the logical role/title, whether the real PM and role routes were verified, and the dispatch/callback receipt IDs without exposing credentials. For Consultation, report the consultation/seat IDs, exact titles, authorization scope, rounds completed, missing callbacks, synthesis path, Owner confirmation status, and any derived decision/task references without exposing runtime task IDs.
 
 For initialization, explicitly list existing files left untouched and any `MANUAL_MERGE` work. For worker delivery, provide both implementation and report commits. For PM acceptance, identify the exact reviewed commit and integration status.

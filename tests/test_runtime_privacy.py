@@ -64,7 +64,9 @@ class RuntimePrivacyTests(unittest.TestCase):
         reporter, output = self._validate_privacy()
 
         self.assertEqual(0, reporter.errors, output)
-        self.assertEqual(8, reporter.passes, output)
+        self.assertEqual(
+            2 * len(VALIDATOR.RUNTIME_PRIVATE_FILES), reporter.passes, output
+        )
 
     def test_existing_untracked_runtime_files_are_valid_when_ignored(self) -> None:
         self._ignore_runtime()
@@ -90,7 +92,7 @@ class RuntimePrivacyTests(unittest.TestCase):
 
         reporter, output = self._validate_privacy()
 
-        self.assertEqual(4, reporter.errors, output)
+        self.assertEqual(len(VALIDATOR.RUNTIME_PRIVATE_FILES), reporter.errors, output)
         for relative in VALIDATOR.RUNTIME_PRIVATE_FILES:
             self.assertIn(
                 f"{relative.as_posix()} must not be Git tracked",
@@ -100,7 +102,7 @@ class RuntimePrivacyTests(unittest.TestCase):
     def test_unignored_runtime_paths_fail_even_when_files_are_absent(self) -> None:
         reporter, output = self._validate_privacy()
 
-        self.assertEqual(4, reporter.errors, output)
+        self.assertEqual(len(VALIDATOR.RUNTIME_PRIVATE_FILES), reporter.errors, output)
         for relative in VALIDATOR.RUNTIME_PRIVATE_FILES:
             self.assertIn(
                 f"{relative.as_posix()} must be excluded by an effective Git ignore rule",
@@ -113,7 +115,11 @@ class RuntimePrivacyTests(unittest.TestCase):
             reporter = VALIDATOR.validate(self.project, require_committed=False)
 
         rendered = output.getvalue()
-        self.assertGreaterEqual(reporter.errors, 4, rendered)
+        self.assertGreaterEqual(
+            reporter.errors,
+            len(VALIDATOR.RUNTIME_PRIVATE_FILES),
+            rendered,
+        )
         for relative in VALIDATOR.RUNTIME_PRIVATE_FILES:
             self.assertIn(
                 f"{relative.as_posix()} must be excluded by an effective Git ignore rule",

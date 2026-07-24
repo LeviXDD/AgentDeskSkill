@@ -1,12 +1,13 @@
 # 数据模型、Schema 与模板
 
-本参考给出任务账本、任务卡、交付报告与验收记录的规范格式。事件、outbox、消息、本机运行时文件和校验规则见 [事件、Outbox 与校验](events-outbox-and-validation.md)。创建或校验项目文件时，应复用这里的字段与不变量。
+本参考给出执行任务账本、任务卡、交付报告与验收记录的规范格式。事件、outbox、消息、本机运行时文件和校验规则见 [事件、Outbox 与校验](events-outbox-and-validation.md)；独立咨询记录见 [圆桌研讨与咨询协议](consultation-protocol.md)。创建或校验项目文件时，应复用对应字段与不变量。
 
 ## 目录
 
 - [权威性与写入权](#1-权威性与写入权)
 - [推荐目录](#2-推荐目录)
 - [岗位身份字段](#21-岗位身份字段)
+- [咨询记录边界](#22-咨询记录边界)
 - [权威任务账本](#3-权威任务账本tasksyaml)
 - [岗位模型策略与绑定](#34-岗位模型策略与绑定)
 - [版本化任务卡模板](#4-版本化任务卡模板)
@@ -20,7 +21,7 @@
 
 ### 1.1 唯一当前状态
 
-`docs/pm/state/tasks.yaml` 是**编排状态的唯一权威来源**。只有当前逻辑 PM lease 的持有者可以修改它；STATUS、BOARD 和仪表盘只能由它与被引用的版本化任务卡生成，不能反向编辑。
+`docs/pm/state/tasks.yaml` 是**执行任务编排状态的唯一权威来源**。只有当前逻辑 PM lease 的持有者可以修改它；STATUS、BOARD 和执行仪表盘只能由它与被引用的版本化任务卡生成，不能反向编辑。
 
 - 任务卡定义某个 revision；report 声明交付；acceptance record 记录审查，三者都不保存当前状态。
 - event/outbox 只负责通知与审计，不能覆盖账本。
@@ -30,7 +31,7 @@
 
 | 文件 | 写入者 | 更新方式 | 是否权威 |
 | --- | --- | --- | --- |
-| `state/tasks.yaml` | 当前 PM lease holder | 原子更新 | 当前编排状态唯一权威 |
+| `state/tasks.yaml` | 当前 PM lease holder | 原子更新 | 当前执行编排状态唯一权威 |
 | `tasks/TC-XXX-rN-*.md` | PM | 派发后不可变 | 该 revision 的规格权威 |
 | `reports/TC-XXX-rN-aN.md` | 指派角色 | 每个 attempt 新增并提交 | 交付声明与自检证据 |
 | `acceptances/TC-XXX-rN-aN-reviewN.md` | PM | 每次审查新增且不可变 | 审查证据 |
@@ -38,11 +39,13 @@
 | `outbox/*.yaml` | 当前 PM lease holder | 与派发迁移同时新增 | 待发送消息意图，非当前状态权威 |
 | `ROLE-POLICIES.yaml` | Project Leader；PM 按授权提交 | 策略变更时版本化提交 | 岗位模型要求权威，不含厂商绑定 |
 | `STATUS.md`、`BOARD.md` | 生成器 | 从账本全量重建 | 人类视图，非权威 |
+| `consultations/CNNN/consultation.yaml` | Leader | 每次咨询迁移更新，公开且版本化 | 该次咨询生命周期权威；不驱动执行 |
+| `CONSULTATIONS.md` | 生成器 | 从公开咨询记录全量重建 | 咨询人类视图，非权威 |
 | `.agentdesk/runtime/*.yaml` | 本机运行时 | 就地更新 | 本机真实任务路由、transport receipts 与 lease，禁止提交 |
 
 ### 冲突裁决
 
-当前状态冲突时以 `tasks.yaml` 为准；工作范围冲突时以对应 revision 的任务卡为准；代码内容冲突时以账本记录的 Git SHA 为准。聊天消息只能触发复核，不能裁决冲突。
+执行状态冲突时以 `tasks.yaml` 为准；单次咨询状态冲突时以对应 `consultation.yaml` 为准，但它不能覆盖执行状态；工作范围冲突时以对应 revision 的任务卡为准；代码内容冲突时以账本记录的 Git SHA 为准。聊天消息只能触发复核，不能裁决冲突。
 
 ## 2. 推荐目录
 
@@ -63,8 +66,16 @@ docs/
       EVT-20260712-0001.yaml      # append-only 状态迁移事件
     outbox/
       MSG-20260712-0001.yaml      # PM 待投递消息，可安全重放
+    consultations/
+      C001/
+        consultation.yaml        # 单次咨询生命周期，JSON-compatible YAML
+        brief.md                  # 冻结的共同问题与各席 focus
+        responses/                # Leader 收到 callback 后持久化的原文
+        synthesis.md              # Leader 综合，不等于 Owner 决策
     STATUS.md                     # 从 tasks.yaml 生成
     BOARD.md                      # 从 tasks.yaml 生成
+    CONSULTATIONS.md              # 从公开咨询记录生成
+    CONSULTATION-POLICY.yaml      # 席位、轮次、授权和确认上限
     ROLES.md                      # 项目启用的逻辑角色
     ROLE-POLICIES.yaml            # 厂商无关的岗位模型策略
     CHECKS.yaml                   # 允许自动运行的命令目录
@@ -77,6 +88,7 @@ docs/
     pm-lease.yaml                 # timed 模式的本机 PM lease 镜像
     inbox/                        # 尚未入账的回调与去重游标
     transport-receipts.yaml       # dispatch/callback 真实 transport receipts
+    consultations.yaml            # 咨询 task IDs、标题核验与 prompt/callback receipts
 .gitignore
 ```
 
@@ -88,6 +100,7 @@ docs/
 - `attempt` 从 `1` 开始；同一 revision 的重新派发只递增 attempt。
 - report 文件的 `aN` 对应 attempt；acceptance 文件再以 `reviewN` 区分同一 attempt 的审查记录。
 - 仓库内路径一律使用相对路径和 `/`，不写本机绝对路径。
+- 咨询使用项目内不复用的 `C` 加三位数字；席位 ID 是 `<consultation_id>.<两位 seat_no>`，精确标题是 `<seat_id> . <seat_name>｜<short_topic>`，不占用执行岗位编号。
 
 ### 2.1 岗位身份字段
 
@@ -102,6 +115,20 @@ docs/
 | `status` | `Proposed`、`Active`、`Paused`、`Retired` | 只有 Active 可接新派发 |
 
 规范标题按 `role_no + " . " + role_name` 确定，`expected_thread_title` 只是该公式的显式派生列，不能自由填写，也不能从运行时自动标题反向推导。`role_id` 进入任务卡后不得静默改义；改名或拆岗要记录决策并重新验证 runtime route。Standard / Automated 的 route 使用 `agentdesk.routes/v2`，其 `role_no`、`role_name` 和 expected title 必须与这里相等；完整 runtime schema 见 [事件、Outbox 与校验](events-outbox-and-validation.md)。
+
+### 2.2 咨询记录边界
+
+咨询记录使用独立的 `agentdesk.consultation/v1`，不得塞入 `agentdesk.tasks/v2`，也不得把 seat 写入 Active roles。以 [consultation-record-template.yaml](../assets/consultation-record-template.yaml) 为骨架，并遵循以下分层：
+
+- 公开 `consultation.yaml` 只保存议题、授权范围、1–3 个席位、最多两轮、公开 artifact 路径、综合与 Owner 确认；禁止 `thread_id`、`host_id`、cursor、token、绝对 worktree 或 provider receipt。
+- `.agentdesk/runtime/consultations.yaml` 使用 `agentdesk.consultation-runtime/v1`，只保存真实任务身份、expected/actual title、prompt receipt 和 response receipt，始终 gitignored。
+- 第一轮 response 使用同一 brief digest；咨询席主动回调后，由 Leader 将其内容持久化到 `responses/`。Seat 自己无权写项目控制面。
+- `derived_refs` 只有在 `confirmation.status: confirmed` 时才能非空；被确认的咨询结论仍不能替代正常任务卡、执行岗位授权、dispatch、验收或集成证据。
+- record 模板安全地从 `awaiting_authorization + creation_authorization: null + rounds: []` 开始；取消时填写 `cancellation_reason` 并保留已有轮次证据。
+- 咨询派生任务卡的 frontmatter 同时写 `source_consultation_id` 与 `source_confirmation_id`，并由 record 的 `derived_refs.task_card_paths` 反向引用；咨询派生决策行同样引用 consultation/confirmation ID。
+- `validate_consultations.py` 会拒绝空白必需章节、未替换模板 token、公开 record/artifact 中的 runtime 键值或本机绝对路径；`--require-runtime` 还会拒绝咨询席与 Worker 复用 thread、孤儿 seat/receipt、非终态或伪 provider evidence、授权/brief/route→prompt→callback→公开回答持久化→综合→Owner 确认的因果倒置，以及缺失的主动回调闭环。
+
+完整字段、状态机、命名和恢复规则见 [圆桌研讨与咨询协议](consultation-protocol.md)。可复用内容骨架见 [consultation brief](../assets/consultation-brief-template.md)、[Round 1 response](../assets/consultation-response-template.md)、[Round 2 response](../assets/consultation-response-r2-template.md) 与 [synthesis](../assets/consultation-synthesis-template.md)。
 
 ## 3. 权威任务账本：`tasks.yaml`
 
@@ -310,6 +337,8 @@ conflict_surfaces:
 required_checks:
   - check_id: service.typecheck
     required: true
+source_consultation_id: null       # 咨询派生时改为 C001
+source_confirmation_id: null       # 咨询派生时改为 CC-C001-...
 owner_approval:
   gate: none
   required_capabilities: []

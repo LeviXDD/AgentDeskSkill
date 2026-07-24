@@ -1,6 +1,6 @@
 # Codex 任务运行时适配器
 
-本参考是 Codex 上执行 Standard / Automated 多岗位闭环的低自由度适配器。它规定真实任务的创建、命名、核验、派发、主动回调和 receipt 记录顺序。仓库 event/outbox 证明“意图已提交”；本适配器证明“真实任务存在且消息已发送”。两者缺一不可。
+本参考是 Codex 上执行 Standard / Automated 多岗位闭环的低自由度适配器。它规定真实任务的创建、命名、核验、派发、主动回调和 receipt 记录顺序；文末另给只读咨询任务的独立适配顺序。仓库 event/outbox 证明“意图已提交”；本适配器证明“真实任务存在且消息已发送”。两者缺一不可。
 
 ## 目录
 
@@ -12,6 +12,7 @@
 - [消息模板](#6-消息模板)
 - [重试与恢复](#7-重试与恢复)
 - [适配器合规检查](#8-适配器合规检查)
+- [咨询任务适配器](#9-咨询任务适配器)
 
 ## 1. 强制边界
 
@@ -278,3 +279,35 @@ blocked_reason：<none-or-reason>
 - [ ] `validate_project.py --project <repo> --require-runtime` 通过；仓库 strict 与 runtime strict 双通过。
 
 任一项为“否”，应明确报告具体缺口并保持 Lite/Blocked/Recover 状态；不得用 `55 pass / 0 error`、outbox 文件存在或 report 已提交来替代真实闭环证明。
+
+## 9. 咨询任务适配器
+
+咨询席是临时只读 advisory task，不是 Active role 或 Worker。它不使用 worktree、`routes/v2`、execution outbox、`dispatch_id`、`select_model.py` 或 `transport-receipts/v1`。完整语义见 [圆桌研讨与咨询协议](consultation-protocol.md)。Codex 上固定执行：
+
+1. 从当前可调用工具的实际 schema 做 capability discovery；不要假设旧版工具名或参数仍存在。项目内议题在工具可用时先解析真实项目；与仓库无关的一般议题可使用 projectless task。二者都不得猜 project/thread ID。
+2. 核对本次 consultation ID、1–3 个 exact titles、轮数和只读边界已有 topic-bounded 用户授权。授权缺失时只展示计划并停止创建。
+3. 创建全部授权席位。项目内只读咨询优先绑定 local project context，不要求或暗示 Worker worktree；只有用户明确点名具体模型且 `create_thread` 的当前 schema 允许时，才传 model override。
+4. `create_thread` 异步返回时，优先使用宿主提供的 wait primitive；若不可用，进行有界 `list_threads` / `read_thread` 复验。排队 `clientThreadId` 不是 verified seat identity。
+5. 对每席立即设置精确标题 `<consultation_id>.<seat_no> . <seat_name>｜<short_topic>`，再逐一读取并验证 actual title、真实 `thread_id`、可达状态、席位彼此不同且都不同于 Leader source。任一项失败都把该席标为未验证并停止向它发送 brief。
+6. 将 source task ID、seat task IDs、expected/actual titles、host、verified time 与 runtime-only `model_binding` 只写 `.agentdesk/runtime/consultations.yaml`。没有可验证模型证据时使用 `default_unverified` 或 `override_unverified`，不得猜 actual model。公开 `consultation.yaml` 只保存 seat ID、expected title 和厂商无关模型要求。
+7. 向全部 verified seats 发送同一 R1 brief digest 和各自 focus，并记录 prompt receipt。消息必须携带 runtime-only Leader source task ID、固定 response/callback ID 和“只在席位任务最终作答不算回调”的要求。
+8. 咨询席完成后调用真实跨任务发送工具主动回调 delegation source。Leader 观察到消息后写 response receipt，并把原文持久化到公开 response artifact；发送失败复用同一 callback ID，不新建席位或轮次。
+9. 只在关键分歧影响结论时复用原席位发送一次 R2。Leader 综合并取得 Owner 确认；咨询适配器到此结束，不自动切换到 execution dispatch。
+
+确定性顺序为：
+
+```text
+topic-bounded authorization
+→ resolve project context when needed
+→ create all seats
+→ wait or bounded discovery
+→ set exact titles
+→ read/list verify every identity
+→ send frozen R1 brief
+→ seats callback Leader source
+→ optional R2
+→ synthesize
+→ Owner confirmation
+```
+
+若缺少创建、改名、读取、跨任务发送或必要等待能力，保留已取得的公开咨询证据并明确报告缺口；不能用同一任务内多个人格、未验证标题、仅本地 final answer 或伪造 receipt 宣称多会话研讨已闭环。

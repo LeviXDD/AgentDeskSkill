@@ -6,6 +6,7 @@
 
 - [协议目标](#1-协议目标)
 - [控制面与权威数据](#2-控制面与唯一写入权)
+- [咨询控制面边界](#24-咨询控制面边界)
 - [岗位模型策略](#31-岗位模型策略与运行时绑定)
 - [岗位身份与真实会话](#32-岗位身份与真实会话)
 - [任务、交付与集成状态](#4-三个正交维度)
@@ -29,7 +30,7 @@ Standard / Automated 必须同时实现可观察的真实闭环：PM/Leader 真�
 
 **PM 或代表 PM 运行的自动化进程，是控制面状态的唯一写入者。**
 
-它独占 `docs/pm/state/tasks.yaml`、`docs/pm/events/`、`docs/pm/outbox/`、`docs/pm/acceptances/`、生成视图 `BOARD.md`/`STATUS.md`，以及卡片状态、派发次数、验收与集成信息等控制字段的写入权。
+它独占 `docs/pm/state/tasks.yaml`、`docs/pm/events/`、`docs/pm/outbox/`、`docs/pm/acceptances/`、生成视图 `BOARD.md`/`STATUS.md`，以及卡片状态、派发次数、验收与集成信息等**执行控制字段**的写入权。
 
 角色会话不得直接修改上述状态。它只能在自己的 worktree 实现代码、创建版本化交付报告、发送带 `dispatch_id` 的完成或阻塞回调，并更新任务卡明确允许的业务文件。
 
@@ -41,7 +42,7 @@ Standard / Automated 必须同时实现可观察的真实闭环：PM/Leader 真�
 
 | 层级 | 载体 | 作用 | 能否直接驱动调度 |
 |---|---|---|---|
-| 1 | `tasks.yaml` | 当前机器权威快照 | 是 |
+| 1 | `tasks.yaml` | 当前执行任务的机器权威快照 | 是 |
 | 2 | `events/*.yaml` | 迁移、批准与撤销的审计记录及恢复依据 | 是，用于核对或重建 |
 | 3 | `tasks/TC-*.md` | 版本化任务规格 | 仅提供约束，不代表当前状态 |
 | 4 | `reports/TC-*.md` | 角色交付证据 | 否，须经 PM 验收 |
@@ -55,6 +56,8 @@ Standard / Automated 必须同时实现可观察的真实闭环：PM/Leader 真�
 2. `tasks.yaml` 与事件尾部不一致时，停止调度，按 [运行手册与故障恢复](runbooks-and-recovery.md) 做一致性恢复。
 3. report、回调或聊天中的“完成”不得直接覆盖任务状态。
 4. 任务卡规格如被修订，必须产生新 `revision`；正在执行的派发继续绑定旧版本，除非显式取消或替代。
+
+本表只裁决执行任务。可选研讨使用独立的 `docs/pm/consultations/CNNN/consultation.yaml`，其建议不能直接驱动调度或覆盖 `tasks.yaml`；完整边界见 [咨询控制面边界](#24-咨询控制面边界)。
 
 ### 2.3 一次迁移必须是一个原子提交
 
@@ -76,6 +79,18 @@ Standard / Automated 必须同时实现可观察的真实闭环：PM/Leader 真�
 - 修改历史 event；
 - 将两次语义不同的迁移压成一个含糊事件；
 - 在状态 commit 中夹带业务实现代码。
+
+### 2.4 咨询控制面边界
+
+咨询是执行前或执行间隙的只读 advisory workflow，与任务卡状态机正交：
+
+- `docs/pm/consultations/CNNN/consultation.yaml` 只记录单次研讨的授权范围、席位、轮次、综合与 Owner 确认状态；它不是 `tasks.yaml` 的扩展，也不能迁移任何执行任务。
+- `brief.md`、`responses/` 与 `synthesis.md` 保存咨询证据；`CONSULTATIONS.md` 是从公开记录生成的非权威视图。
+- 真实 task/thread ID、标题核验、prompt/callback receipts 只进入 gitignored `.agentdesk/runtime/consultations.yaml`，不得写入公开咨询记录。
+- Leader 是单次咨询记录的唯一协调者；咨询席只读，不进入 `ROLES.md` 的 Active 表，不持有 PM lease、Worker dispatch、验收或集成权，也不能创建更多会话。
+- 只有 Owner 明确确认的 scope 才能形成 `DECISIONS.md` 条目或候选任务卡。确认咨询结论不授权创建执行岗位任务、实现、验收、合并、部署或发布。
+
+席位数量、命名、授权、首轮独立、主动回调、第二轮和恢复规则见 [圆桌研讨与咨询协议](consultation-protocol.md)。咨询消息使用自己的 prompt/response/callback ID 命名空间，不复用 execution `dispatch_id`、`message_id` 或 Worker `callback_id`。
 
 ## 3. 仓库状态与运行时状态分离
 
@@ -129,7 +144,7 @@ runtime binding 中的 tier/capability 是受信运行环境的能力声明，�
 
 selector 与 validator 是派发 guard，不负责启动 provider 模型。调度器/runtime adapter 必须在投递前证明能按所选 binding、稳定 model revision 与 deliberation tier 启动执行；不能指定模型的运行时只能把该策略当审计要求，禁止宣称已强制路由。report 的 `executor_model` 是执行者声明；只有受信 adapter/provider receipt 能把它提升为独立的实际路由证明。
 
-一个 dispatch 只冻结一个 primary execution binding。未经声明不得把实质工作转交给更弱或未记录的子 Agent；对目标、实现或验收证据有实质贡献的 subagent 必须有自己的 dispatch/execution evidence。
+一个 dispatch 只冻结一个 primary execution binding。未经声明不得把实质工作转交给更弱或未记录的子 Agent；对实现、测试或验收证据有实质贡献的 subagent 必须有自己的 dispatch/execution evidence。只提供决策建议的临时咨询席改用独立 consultation evidence；它不得修改实现，也不能用咨询证据冒充执行、测试或验收证据。
 
 模型等级只说明执行资源，不授予产品决策、控制面写入、凭据、外部副作用、验收、合并或发布权限，也不能绕过任何 Owner/PM approval 或 capability gate。
 
@@ -155,6 +170,8 @@ Standard / Automated 的会话不变量：
 6. runtime adapter/thread tools 不可用时，只能明确使用 Lite/manual 或阻塞；不得宣称 Standard / Automated 闭环。
 
 Codex 的确定性工具顺序见 [Codex 任务运行时适配器](codex-runtime-adapter.md)。
+
+咨询席不是 `Active` 岗位：它使用 `C001.01` 风格的临时 seat ID 和 `<consultation_id>.<seat_no> . <seat_name>｜<short_topic>` 标题，不占用 `R1/R2` 等执行编号，不要求 Worker worktree/route，也不能满足 Standard execution 的独立 Worker 条件。
 
 ## 4. 三个正交维度
 

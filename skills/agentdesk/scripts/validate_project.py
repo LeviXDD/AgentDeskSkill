@@ -28,6 +28,7 @@ RUNTIME_PRIVATE_FILES = (
     Path(".agentdesk/runtime/routes.yaml"),
     Path(".agentdesk/runtime/transport-receipts.yaml"),
     Path(".agentdesk/runtime/pm-lease.yaml"),
+    Path(".agentdesk/runtime/consultations.yaml"),
 )
 SCHEMA_VERSION = "agentdesk.tasks/v2"
 ROLE_POLICY_SCHEMA_VERSION = "agentdesk.role-policies/v1"
@@ -86,6 +87,7 @@ PAYLOAD_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 EVENT_ID_RE = re.compile(r"^EVT-.+")
 MESSAGE_ID_RE = re.compile(r"^MSG-.+")
 APPROVAL_ID_RE = re.compile(r"^APR-.+")
+CONSULTATION_ROLE_NO_RE = re.compile(r"^C[0-9]{3}\.[0-9]{2}$")
 
 REQUIRED_FILES = (
     Path("AGENTS.md"),
@@ -2953,6 +2955,10 @@ def _active_role_ids(project: Path, reporter: Reporter) -> Optional[set[str]]:
             )
             continue
         required_title = f"{role_no} . {role_name}"
+        if CONSULTATION_ROLE_NO_RE.fullmatch(role_no):
+            reporter.error(
+                f"execution role {role_id} uses reserved consultation seat number {role_no!r}"
+            )
         if expected_title != required_title:
             reporter.error(
                 f"role {role_id} expected_thread_title must equal {required_title!r}"
@@ -3203,6 +3209,37 @@ def _validate_task_card(
             reporter.error(f"{context} frontmatter risk must be one of L0 through L4")
     if _parse_rfc3339_utc(frontmatter.get("created_at")) is None:
         reporter.error(f"{context} frontmatter created_at must be a UTC RFC3339 timestamp")
+
+    source_consultation_id = frontmatter.get("source_consultation_id")
+    source_confirmation_id = frontmatter.get("source_confirmation_id")
+    if (source_consultation_id is None) != (source_confirmation_id is None):
+        reporter.error(
+            f"{context} frontmatter source_consultation_id and "
+            "source_confirmation_id must both be null or both be set"
+        )
+    if source_consultation_id is not None:
+        if not isinstance(source_consultation_id, str) or re.fullmatch(
+            r"C[0-9]{3}", source_consultation_id
+        ) is None:
+            reporter.error(
+                f"{context} frontmatter source_consultation_id must match C followed by three digits"
+            )
+        confirmation_match = (
+            re.fullmatch(
+                r"CC-(C[0-9]{3})-[A-Z0-9]{4,32}", source_confirmation_id
+            )
+            if isinstance(source_confirmation_id, str)
+            else None
+        )
+        if (
+            confirmation_match is None
+            or confirmation_match.group(1) != source_consultation_id
+            or re.search(r"(?:XXXX|TODO|TBD)", str(source_confirmation_id), re.IGNORECASE)
+        ):
+            reporter.error(
+                f"{context} frontmatter source_confirmation_id must be a stable, "
+                "non-placeholder confirmation ID for source_consultation_id"
+            )
 
     role_id = frontmatter.get("role_id")
     if not _nonempty_string(role_id) and state != "draft":
