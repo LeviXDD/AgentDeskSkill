@@ -15,7 +15,10 @@ project.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -25,7 +28,40 @@ from typing import Iterable, Mapping, Sequence
 
 
 IGNORE_ENTRY = ".agentdesk/runtime/"
-TEMPLATE_ROOT = Path(__file__).resolve().parent.parent / "assets" / "project-template"
+SKILL_ROOT = Path(__file__).resolve().parent.parent
+TEMPLATE_ROOT = SKILL_ROOT / "assets" / "project-template"
+RELEASE_MANIFEST = SKILL_ROOT / "release-manifest.json"
+PROJECT_LOCK_FILE = Path("docs/pm/AGENTDESK.lock.json")
+STATE_FILE = Path("docs/pm/state/tasks.yaml")
+AGENTDESK_MARKERS = (
+    STATE_FILE,
+    Path("docs/pm/BOARD.md"),
+    Path("docs/pm/CHECKS.yaml"),
+    Path("docs/pm/CONSULTATION-POLICY.yaml"),
+    Path("docs/pm/CONSULTATIONS.md"),
+    Path("docs/pm/DECISIONS.md"),
+    Path("docs/pm/PM-PLAYBOOK.md"),
+    Path("docs/pm/ROLE-POLICIES.yaml"),
+    Path("docs/pm/ROLES.md"),
+    Path("docs/pm/STATUS.md"),
+    Path("docs/pm/state"),
+    Path("docs/pm/tasks"),
+    Path("docs/pm/reports"),
+    Path("docs/pm/acceptances"),
+    Path("docs/pm/consultations"),
+    Path("docs/pm/events"),
+    Path("docs/pm/outbox"),
+    Path(".agentdesk"),
+    Path(".agentdesk/runtime"),
+    Path(".agentdesk/runtime/consultations.yaml"),
+    Path(".agentdesk/runtime/model-bindings.yaml"),
+    Path(".agentdesk/runtime/routes.yaml"),
+    Path(".agentdesk/runtime/transport-receipts.yaml"),
+)
+RELEASE_MANIFEST_SCHEMA = "agentdesk.release-manifest/v1"
+PROJECT_LOCK_SCHEMA = "agentdesk.project-lock/v1"
+SOURCE_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+BUNDLE_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 REQUIRED_DIRECTORIES = (
     Path("docs/pm/state"),
     Path("docs/pm/tasks"),
@@ -57,6 +93,210 @@ class RenderedTemplate:
 
     directories: tuple[Path, ...]
     files: tuple[tuple[Path, bytes], ...]
+
+
+def _load_release_manifest(manifest_path: Path) -> dict[str, object]:
+    """Load the candidate bundle identity without trusting caller input."""
+
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise TemplateError(
+            f"release manifest must be a regular file: {manifest_path}"
+        )
+    try:
+        value = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise TemplateError(f"cannot read release manifest: {exc}") from exc
+    if not isinstance(value, dict):
+        raise TemplateError("release manifest must contain one JSON object")
+    if value.get("schema_version") != RELEASE_MANIFEST_SCHEMA:
+        raise TemplateError(
+            "release manifest schema_version must be "
+            f"{RELEASE_MANIFEST_SCHEMA!r}"
+        )
+    release_status = value.get("release_status")
+    if release_status not in {"development", "stable"}:
+        raise TemplateError(
+            "release manifest release_status must be exactly 'development' "
+            "or 'stable'"
+        )
+
+    release = value.get("skill_release")
+    if not isinstance(release, str):
+        raise TemplateError("release manifest skill_release must be a string")
+    _validate_replacement_value("release manifest skill_release", release)
+
+    source_commit = value.get("source_commit")
+    if source_commit is not None and (
+        not isinstance(source_commit, str)
+        or SOURCE_COMMIT_RE.fullmatch(source_commit) is None
+    ):
+        raise TemplateError(
+            "release manifest source_commit must be null or a lowercase 40-hex SHA"
+        )
+
+    bundle_digest = value.get("bundle_sha256")
+    if bundle_digest is not None and (
+        not isinstance(bundle_digest, str)
+        or BUNDLE_DIGEST_RE.fullmatch(bundle_digest) is None
+    ):
+        raise TemplateError(
+            "release manifest bundle_sha256 must be null or a lowercase 64-hex digest"
+        )
+
+    return value
+
+
+def _release_replacements(manifest: Mapping[str, object]) -> dict[str, str]:
+    """Return JSON-safe project-template replacements for one manifest."""
+
+    source_commit = manifest.get("source_commit")
+    bundle_digest = manifest.get("bundle_sha256")
+    return {
+        "{{AGENTDESK_SKILL_RELEASE}}": str(manifest["skill_release"]),
+        "{{AGENTDESK_SOURCE_COMMIT_JSON}}": json.dumps(source_commit),
+        "{{AGENTDESK_BUNDLE_SHA256_JSON}}": json.dumps(bundle_digest),
+    }
+
+
+def _compute_release_bundle_digest(skill_root: Path) -> str:
+    """Use the same canonical-manifest digest as check_compatibility.py."""
+
+    manifest_path = skill_root / "release-manifest.json"
+    manifest = _load_release_manifest(manifest_path)
+    normalized_manifest = dict(manifest)
+    normalized_manifest["bundle_sha256"] = None
+    try:
+        canonical_manifest = (
+            json.dumps(
+                normalized_manifest,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+            + b"\n"
+        )
+    except (TypeError, ValueError) as exc:
+        raise TemplateError(
+            f"release manifest cannot be serialized as canonical JSON: {exc}"
+        ) from exc
+    entries: list[tuple[str, str]] = []
+    try:
+        for path in sorted(
+            skill_root.rglob("*"),
+            key=lambda item: item.relative_to(skill_root).as_posix(),
+        ):
+            relative = path.relative_to(skill_root)
+            if path.is_symlink():
+                raise TemplateError(
+                    f"Skill bundle must not contain symlinks: {relative.as_posix()}"
+                )
+            if path.is_dir():
+                continue
+            if not path.is_file():
+                raise TemplateError(
+                    "Skill bundle contains an unsupported entry: "
+                    f"{relative.as_posix()}"
+                )
+            effective_bytes = (
+                canonical_manifest if path == manifest_path else path.read_bytes()
+            )
+            entries.append(
+                (relative.as_posix(), hashlib.sha256(effective_bytes).hexdigest())
+            )
+    except OSError as exc:
+        raise TemplateError(f"cannot verify Skill bundle digest: {exc}") from exc
+    aggregate = hashlib.sha256()
+    for relative, digest in entries:
+        aggregate.update(relative.encode("utf-8"))
+        aggregate.update(b"\0")
+        aggregate.update(digest.encode("ascii"))
+        aggregate.update(b"\n")
+    return aggregate.hexdigest()
+
+
+def _existing_agentdesk_markers(project: Path) -> tuple[Path, ...]:
+    return tuple(
+        marker
+        for marker in AGENTDESK_MARKERS
+        if (project / marker).exists() or (project / marker).is_symlink()
+    )
+
+
+def _load_existing_project_lock(path: Path) -> dict[str, object]:
+    if path.is_symlink() or not path.is_file():
+        raise ProjectArgumentError(
+            f"{PROJECT_LOCK_FILE.as_posix()} must be a regular JSON file"
+        )
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProjectArgumentError(
+            f"cannot read {PROJECT_LOCK_FILE.as_posix()}: {exc}"
+        ) from exc
+    if not isinstance(value, dict):
+        raise ProjectArgumentError(
+            f"{PROJECT_LOCK_FILE.as_posix()} must contain one JSON object"
+        )
+    return value
+
+
+def _require_matching_project_lock(
+    project: Path,
+    project_id: str,
+    manifest: Mapping[str, object],
+) -> None:
+    """Allow initializer replay only when the existing lock is exact."""
+
+    lock = _load_existing_project_lock(project / PROJECT_LOCK_FILE)
+    expected_compatibility = manifest.get("compatibility")
+    expected_operation_compatibility = (
+        {
+            "reader": expected_compatibility.get("reader"),
+            "writer": expected_compatibility.get("writer"),
+        }
+        if isinstance(expected_compatibility, dict)
+        else None
+    )
+    checks = (
+        ("schema_version", lock.get("schema_version"), PROJECT_LOCK_SCHEMA),
+        ("project_id", lock.get("project_id"), project_id),
+        (
+            "skill",
+            lock.get("skill"),
+            {
+                "release": manifest.get("skill_release"),
+                "source_commit": manifest.get("source_commit"),
+                "bundle_sha256": manifest.get("bundle_sha256"),
+            },
+        ),
+        (
+            "protocol",
+            lock.get("protocol"),
+            {"version": manifest.get("protocol_version")},
+        ),
+        (
+            "schemas",
+            lock.get("schemas"),
+            (
+                manifest.get("schema_set", {}).get("schemas")
+                if isinstance(manifest.get("schema_set"), dict)
+                else None
+            ),
+        ),
+        ("runtime_adapter", lock.get("runtime_adapter"), manifest.get("runtime_adapter")),
+        (
+            "operation_compatibility",
+            lock.get("operation_compatibility"),
+            expected_operation_compatibility,
+        ),
+    )
+    mismatches = [name for name, actual, expected in checks if actual != expected]
+    if mismatches:
+        raise ProjectArgumentError(
+            f"{PROJECT_LOCK_FILE.as_posix()} does not exactly match this Skill "
+            f"bundle ({', '.join(mismatches)}); no files were changed"
+        )
 
 
 def _emit(status: str, relative_path: Path, detail: str | None = None) -> None:
@@ -370,11 +610,23 @@ def initialize(
     pm_holder_id: str,
     init_git: bool,
     dry_run: bool,
+    allow_development_release: bool = False,
 ) -> None:
     """Initialize ``project`` according to the requested adoption mode."""
 
     project_id = _validate_replacement_value("--project-id", project_id)
     pm_holder_id = _validate_replacement_value("--pm-holder-id", pm_holder_id)
+    manifest = _load_release_manifest(RELEASE_MANIFEST)
+    actual_bundle_digest = _compute_release_bundle_digest(SKILL_ROOT)
+    declared_bundle_digest = manifest.get("bundle_sha256")
+    if (
+        declared_bundle_digest is not None
+        and declared_bundle_digest != actual_bundle_digest
+    ):
+        raise TemplateError(
+            "Skill bundle digest does not match release-manifest.json; "
+            "no project files were changed"
+        )
     lease_mode = "manual" if mode == "lite" else "timed"
     replacements = {
         "{{PROJECT_ID}}": project_id,
@@ -386,6 +638,7 @@ def initialize(
         "{{PM_HOLDER_ID}}": pm_holder_id,
         "{{LEASE_MODE}}": lease_mode,
     }
+    replacements.update(_release_replacements(manifest))
 
     template = _load_template(TEMPLATE_ROOT, replacements)
 
@@ -394,8 +647,59 @@ def initialize(
     if project.is_symlink():
         raise ProjectArgumentError(f"project path must not be a symlink: {project}")
     _preflight_git_location(project)
+
+    markers = _existing_agentdesk_markers(project)
+    lock_path = project / PROJECT_LOCK_FILE
+    lock_exists = lock_path.exists() or lock_path.is_symlink()
+    if markers and not lock_exists:
+        marker_list = ", ".join(path.as_posix() for path in markers)
+        _emit(
+            "MANUAL_MERGE",
+            PROJECT_LOCK_FILE,
+            f"legacy-unpinned AgentDesk markers: {marker_list}",
+        )
+        raise ProjectArgumentError(
+            "legacy-unpinned AgentDesk project requires an explicit version "
+            "migration; no files were changed"
+        )
+    if lock_exists:
+        _require_matching_project_lock(project, project_id, manifest)
+
+    release_verified = (
+        SOURCE_COMMIT_RE.fullmatch(str(manifest.get("source_commit") or ""))
+        is not None
+        and BUNDLE_DIGEST_RE.fullmatch(str(manifest.get("bundle_sha256") or ""))
+        is not None
+        and manifest.get("bundle_sha256") == actual_bundle_digest
+        and manifest.get("release_status") == "stable"
+    )
+    if not dry_run and not release_verified:
+        development_override = (
+            manifest.get("release_status") == "development"
+            and allow_development_release
+        )
+        if not development_override:
+            raise ProjectArgumentError(
+                "this Skill bundle has an unverified development release identity; "
+                "no files were changed. Use a packaged stable release, or pass "
+                "--allow-development-release only for a disposable test project."
+            )
+
     if not project.exists() and not dry_run:
         project.mkdir(parents=True, exist_ok=False)
+
+    lock_templates = [
+        (relative_path, content)
+        for relative_path, content in template.files
+        if relative_path == PROJECT_LOCK_FILE
+    ]
+    if len(lock_templates) != 1:
+        raise TemplateError(
+            "project template must contain exactly one "
+            f"{PROJECT_LOCK_FILE.as_posix()}"
+        )
+    lock_relative, lock_content = lock_templates[0]
+    _create_template_file(project, lock_relative, lock_content, dry_run)
 
     all_directories = _sorted_directories(
         (*template.directories, *REQUIRED_DIRECTORIES)
@@ -404,6 +708,8 @@ def initialize(
         _ensure_directory(project, relative_path, dry_run)
 
     for relative_path, content in template.files:
+        if relative_path == PROJECT_LOCK_FILE:
+            continue
         _create_template_file(project, relative_path, content, dry_run)
 
     _ensure_gitignore(project, dry_run)
@@ -448,6 +754,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="report actions without writing anything",
     )
+    parser.add_argument(
+        "--allow-development-release",
+        action="store_true",
+        help=(
+            "allow an unverified development manifest only for a disposable "
+            "test project; never use this to adopt or migrate an existing project"
+        ),
+    )
     return parser
 
 
@@ -469,6 +783,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             pm_holder_id=args.pm_holder_id,
             init_git=args.init_git,
             dry_run=args.dry_run,
+            allow_development_release=args.allow_development_release,
         )
     except InitializationError as exc:
         print(f"ERROR {exc}", file=sys.stderr)

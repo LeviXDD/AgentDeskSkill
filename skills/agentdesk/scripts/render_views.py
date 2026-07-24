@@ -13,6 +13,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from contextlib import redirect_stdout
@@ -59,6 +60,76 @@ CONSULTATION_STATES = (
 
 class RenderError(Exception):
     """A user-actionable state or filesystem error."""
+
+
+def _require_version_compatibility(
+    project: Path,
+    *,
+    operation: str,
+    release_manifest: Optional[Path] = None,
+) -> None:
+    """Fail closed before a renderer write; keep ``--check`` read-only."""
+
+    checker = Path(__file__).resolve().with_name("check_compatibility.py")
+    command = [
+        sys.executable,
+        str(checker),
+        "--project",
+        str(project),
+        "--operation",
+        operation,
+        "--json",
+    ]
+    if release_manifest is not None:
+        command.extend(("--release-manifest", str(release_manifest)))
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RenderError(
+            f"cannot run AgentDesk version compatibility gate: {exc}"
+        ) from exc
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        detail = result.stderr.strip() or result.stdout.strip() or "no output"
+        raise RenderError(
+            "AgentDesk version compatibility gate returned invalid JSON: "
+            f"{detail}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RenderError(
+            "AgentDesk version compatibility gate returned a non-object"
+        )
+    warnings = payload.get("warnings")
+    if isinstance(warnings, list):
+        for item in warnings:
+            if isinstance(item, dict):
+                print(
+                    "WARN  version compatibility "
+                    f"{item.get('code', 'warning')}: {item.get('message', '')}"
+                )
+    if result.returncode != 0 or payload.get("compatible") is not True:
+        errors = payload.get("errors")
+        details = (
+            "; ".join(
+                f"{item.get('code', 'error')}: {item.get('message', '')}"
+                for item in errors
+                if isinstance(item, dict)
+            )
+            if isinstance(errors, list)
+            else ""
+        )
+        raise RenderError(
+            f"version compatibility gate blocked {operation}: "
+            f"{details or 'no diagnostic'}"
+        )
 
 
 def _nonempty_string(value: Any) -> bool:
@@ -739,6 +810,13 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="compare generated views without writing; exit 1 on drift",
     )
+    parser.add_argument(
+        "--release-manifest",
+        help=(
+            "release manifest for an explicit shadow/read check or test bundle "
+            "(default: the manifest beside this renderer)"
+        ),
+    )
     return parser
 
 
@@ -748,6 +826,20 @@ def main(argv: Optional[list[str]] = None) -> int:
     try:
         if not project.is_dir():
             raise RenderError(f"project path is not a directory: {project}")
+        if args.release_manifest and not args.check:
+            raise RenderError(
+                "--release-manifest is read-only and may be used only with --check; "
+                "writes must use the manifest beside the executing renderer"
+            )
+        _require_version_compatibility(
+            project,
+            operation="validate" if args.check else "write",
+            release_manifest=(
+                Path(args.release_manifest).expanduser().resolve()
+                if args.release_manifest
+                else None
+            ),
+        )
         state = _load_state(project)
         board_path = _safe_project_path(project, BOARD_FILE)
         status_path = _safe_project_path(project, STATUS_FILE)

@@ -56,12 +56,16 @@ Read only what the active mode requires:
 - Read [references/runbooks-and-recovery.md](references/runbooks-and-recovery.md) for PM/worker/QA/integration procedures, risk approvals, heartbeat, migration, or any failure recovery.
 - Read [references/codex-runtime-adapter.md](references/codex-runtime-adapter.md) before creating, renaming, verifying, dispatching to, or calling back a Codex task. Follow its low-freedom tool order and receipt rules exactly.
 - Read [references/consultation-protocol.md](references/consultation-protocol.md) before proposing, authorizing, creating, messaging, synthesizing, validating, or recovering consultation tasks. Use its separate advisory identities, records, runtime receipts, and confirmation gate; do not reuse Worker dispatch semantics.
+- Read [references/versioning-and-upgrades.md](references/versioning-and-upgrades.md) before initializing an existing AgentDesk project, changing its lock, switching Skill releases, migrating schemas, or recovering work that may span versions.
 
 Do not load all references by default. The repository and current task card remain the primary task-local context.
 
 ## Non-Negotiable Invariants
 
 - Treat `docs/pm/state/tasks.yaml` as the only authority for current **execution-task** orchestration state.
+- Treat the immutable bundle `release-manifest.json` and committed `docs/pm/AGENTDESK.lock.json` as the joint version authority. `read`/`validate` compatibility never grants Writer authority.
+- Before any project write, dispatch, callback ingestion, acceptance, recovery mutation, or project-backed consultation mutation, require `check_compatibility.py --operation write` to pass. Unknown or missing locks, unverified bundle digests, and exact-release mismatches fail closed.
+- Never auto-create a lock for `legacy-unpinned` projects, never edit a lock to bypass the gate, and never let an active attempt cross a lock or Skill release change.
 - Treat a versioned task card as the only authority for that revision's work specification.
 - Let only the current logical PM lease holder modify control-plane state.
 - Let roles modify business paths plus their exact assigned `report_path`; keep other control-plane files read-only.
@@ -87,7 +91,7 @@ Do not load all references by default. The repository and current task card rema
 - Never treat a stronger model as authority, approval, capability permission, or permission to bypass a safety gate.
 - Never claim Standard/Automated dispatch, callback, or closed-loop operation when the required runtime adapter, thread tools, route verification, or transport receipts are unavailable. Downgrade explicitly to Lite or stop at the relevant gate.
 
-## Initialize Or Upgrade A Project
+## Initialize Or Explicitly Migrate A Project
 
 ### 1. Inspect Before Writing
 
@@ -111,6 +115,35 @@ Resolve the skill directory from this `SKILL.md`, then run:
 python3 <skill-dir>/scripts/init_project.py --project <repo> --mode standard --dry-run
 python3 <skill-dir>/scripts/init_project.py --project <repo> --mode standard
 ```
+
+The initializer is not an upgrader. If existing AgentDesk markers have no `docs/pm/AGENTDESK.lock.json`, both dry-run and real initialization stop non-zero without changing files; use the explicit migration procedure in [references/versioning-and-upgrades.md](references/versioning-and-upgrades.md). If a lock exists, only the exact same bundle may resume an interrupted or idempotent initialization.
+
+An unverified `development` manifest may be initialized only in a disposable test project with the explicit `--allow-development-release` flag. That flag never authorizes PM/Worker writes, dispatch, migration, or production adoption.
+
+For a real `legacy-unpinned` repository, first freeze dispatch and run the
+dedicated adoption planner from the exact immutable Stable bundle:
+
+```bash
+python3 <skill-dir>/scripts/adopt_legacy_project.py --project <repo> --dry-run
+```
+
+The planner is zero-write. Apply only after reviewing its stable release
+identity, clean Git baseline, project ID, marker inventory, and no-active-attempt
+result, and only with explicit Owner approval:
+
+```bash
+python3 <skill-dir>/scripts/adopt_legacy_project.py \
+  --project <repo> \
+  --apply \
+  --acknowledge-legacy-unpinned
+```
+
+This command exclusively creates the first lock and invokes the same bundle's
+initializer to fill missing templates without overwriting existing files. If
+the initializer fails, preserve the new lock and follow the emitted same-bundle
+recovery command; do not delete or hand-edit the lock. This is a controlled
+first-version adoption, not proof of the historical Skill identity and not a
+general cross-version Schema migrator.
 
 Add `--project-id` and `--pm-holder-id` when the defaults are ambiguous.
 
@@ -160,6 +193,7 @@ The bundled selector and validator do not start a provider model or create/messa
 ### 4. Render, Preflight, Commit, And Validate
 
 ```bash
+python3 <skill-dir>/scripts/check_compatibility.py --project <repo> --operation write
 python3 <skill-dir>/scripts/render_views.py --project <repo>
 python3 <skill-dir>/scripts/validate_project.py --project <repo> --pre-commit
 python3 <skill-dir>/scripts/render_views.py --project <repo> --check
@@ -170,7 +204,12 @@ python3 <skill-dir>/scripts/render_views.py --project <repo> --check
 
 When `CONSULTATION-POLICY.yaml` or consultation records are present, also run `python3 <skill-dir>/scripts/validate_consultations.py --project <repo>`. This validates the advisory record and artifacts; it does not replace live task/title/transport verification.
 
-`--pre-commit` performs structural checks on a proposed snapshot and warns because it cannot prove commit atomicity while control-plane files differ from `HEAD`. After it passes, inspect the diff and commit only the scoped workflow files; never sweep unrelated existing changes into the commit. Final strict validation omits both `--pre-commit` and `--allow-legacy-model-evidence`, and proves canonical state, generated views, acceptance records, and dispatch event/outbox evidence match committed Git history. If the session is not authorized to commit an existing repository, stop with final strict validation pending rather than claiming initialization is complete.
+`--pre-commit` requires Writer compatibility and then performs structural checks on a proposed snapshot; it warns because it cannot prove commit atomicity while control-plane files differ from `HEAD`. After it passes, inspect the diff and commit only the scoped workflow files; never sweep unrelated existing changes into the commit. Final strict validation omits both `--pre-commit` and `--allow-legacy-model-evidence`, and proves canonical state, generated views, acceptance records, and dispatch event/outbox evidence match committed Git history. A final validation exit code does not replace the separate Writer gate. If the session is not authorized to commit an existing repository, stop with final strict validation pending rather than claiming initialization is complete.
+
+`render_views.py` also enforces the gate internally: write mode must use the
+manifest beside the executing immutable renderer, while `--release-manifest`
+is accepted only together with read-only `--check`. Never use an external
+manifest to lend Writer authority to scripts from another checkout.
 
 `--allow-legacy-model-evidence` is only a migration-audit escape hatch for legacy terminal records. Its warnings are never a strict pass and must never drive automatic acceptance or dispatch.
 
@@ -204,7 +243,7 @@ Consultation model requirements are vendor-neutral recommendations. Do not run t
 
 ## PM Workflow
 
-1. Acquire or confirm the logical PM lease and current `lease_epoch`.
+1. Run `check_compatibility.py --operation write`; stop on `legacy-unpinned`, digest failure, mismatch, or an active attempt frozen to another lock. Then acquire or confirm the logical PM lease and current `lease_epoch`.
 2. Read canonical state, the relevant task card, latest decisions, active deliveries, and blockers.
 3. Clarify the next observable outcome and choose the smallest role set.
 4. Create a versioned card from [assets/task-card-template.md](assets/task-card-template.md).
@@ -222,7 +261,7 @@ Do not auto-merge, publish, deploy, send external messages, use production crede
 
 ## Worker Workflow
 
-1. Read `AGENTS.md`, the assigned card, and only its required context.
+1. Run `check_compatibility.py --operation write`, then read `AGENTS.md`, the assigned card, and only its required context. If the current lock differs from the lock in `task_card_commit`, stop without changing code or report state.
 2. Verify `task_id`, `revision`, `attempt`, `dispatch_id`, `task_card_commit`, `base_commit`, role, worktree, paths, report path, and the frozen `model_selection`.
 3. Stop and report stale or conflicting inputs; do not guess the latest task.
 4. Work in the dedicated branch/worktree and stay inside allowed scope.
@@ -244,7 +283,7 @@ A worker's `completed` report means “ready for PM review,” not Accepted.
 
 ## Validate Or Recover
 
-For read-only repository validation, run `validate_project.py` and inspect reported errors before proposing changes. Its ordinary pass does not prove that real tasks exist, titles match, dispatch/callback messages were delivered, or receipts are genuine. For a Standard / Automated local closed-loop verdict, run both:
+For read-only repository validation, run `check_compatibility.py --operation validate`, then `validate_project.py`, and inspect warnings/errors before proposing changes. `legacy-unpinned` and an unverified Candidate may remain readable but are not writable. An ordinary pass does not prove that real tasks exist, titles match, dispatch/callback messages were delivered, or receipts are genuine. For a Standard / Automated local closed-loop verdict, run both:
 
 ```bash
 python3 <skill-dir>/scripts/validate_runtime.py --project <repo> --check-active
@@ -255,7 +294,7 @@ Treat either failure as a failed closed-loop validation; do not substitute one p
 
 For recovery:
 
-1. Freeze new dispatch.
+1. Freeze new dispatch and run the read-only compatibility check. Before any repair write, require the Writer gate; otherwise preserve evidence and use the locked old release or explicit migration path.
 2. Establish one valid PM lease holder and fencing epoch.
 3. Preserve branches, worktrees, reports, messages, and receipts.
 4. Reconcile canonical state against Git objects, task cards, reports, acceptance, outbox, and runtime routes.

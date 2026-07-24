@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,13 +33,116 @@ RENDERER_SPEC.loader.exec_module(RENDERER)
 
 
 TIMESTAMP = "2026-07-21T08:00:00Z"
+DIGEST_SCOPE = "all-files-with-canonical-release-manifest"
+
+
+def _canonical_manifest_bytes(manifest: dict[str, object]) -> bytes:
+    canonical = copy.deepcopy(manifest)
+    canonical["bundle_sha256"] = None
+    return (
+        json.dumps(
+            canonical,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _bundle_digest(bundle: Path, manifest_path: Path) -> str:
+    aggregate = hashlib.sha256()
+    for path in sorted(
+        bundle.rglob("*"),
+        key=lambda item: item.relative_to(bundle).as_posix(),
+    ):
+        if path.is_dir():
+            continue
+        relative = path.relative_to(bundle).as_posix()
+        data = (
+            _canonical_manifest_bytes(
+                json.loads(manifest_path.read_text(encoding="utf-8"))
+            )
+            if path == manifest_path
+            else path.read_bytes()
+        )
+        aggregate.update(relative.encode("utf-8"))
+        aggregate.update(b"\0")
+        aggregate.update(hashlib.sha256(data).hexdigest().encode("ascii"))
+        aggregate.update(b"\n")
+    return aggregate.hexdigest()
+
+
+def _make_tree_read_only(root: Path) -> None:
+    files = [path for path in root.rglob("*") if path.is_file()]
+    directories = [path for path in root.rglob("*") if path.is_dir()]
+    for path in files:
+        path.chmod(0o555 if path.stat().st_mode & 0o111 else 0o444)
+    for path in sorted(directories, key=lambda item: len(item.parts), reverse=True):
+        path.chmod(0o555)
+    root.chmod(0o555)
+
+
+def _make_tree_writable(root: Path) -> None:
+    if not root.exists():
+        return
+    root.chmod(0o755)
+    for path in root.rglob("*"):
+        if path.is_dir():
+            path.chmod(0o755)
+        elif path.is_file():
+            path.chmod(0o755 if path.stat().st_mode & 0o111 else 0o644)
 
 
 class ConsultationValidationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
-        self.project = Path(self.temporary_directory.name)
+        self.root = Path(self.temporary_directory.name)
+        self.project = self.root / "project"
+        self.project.mkdir()
+        self.release_bundle = self.root / "release"
+        self.release_bundle.mkdir()
+        release_scripts = self.release_bundle / "scripts"
+        release_scripts.mkdir()
+        self.renderer_path = release_scripts / "render_views.py"
+        shutil.copy2(RENDERER_PATH, self.renderer_path)
+        shutil.copy2(
+            SKILL_ROOT / "scripts" / "check_compatibility.py",
+            release_scripts / "check_compatibility.py",
+        )
+        shutil.copy2(
+            SKILL_ROOT / "scripts" / "validate_consultations.py",
+            release_scripts / "validate_consultations.py",
+        )
+        self.release_manifest = self.release_bundle / "release-manifest.json"
+        manifest = json.loads(
+            (SKILL_ROOT / "release-manifest.json").read_text(encoding="utf-8")
+        )
+        manifest.update(
+            {
+                "skill_release": "consultation-test-0.2.0",
+                "release_status": "stable",
+                "source_commit": "a" * 40,
+                "bundle_sha256": None,
+                "digest_scope": DIGEST_SCOPE,
+            }
+        )
+        self.release_manifest.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        manifest["bundle_sha256"] = _bundle_digest(
+            self.release_bundle, self.release_manifest
+        )
+        self.release_manifest.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        self.release_identity = manifest
+        self.addCleanup(_make_tree_writable, self.release_bundle)
+        _make_tree_read_only(self.release_bundle)
 
     def _write_json(self, relative: str, value: object) -> Path:
         path = self.project / relative
@@ -466,12 +570,42 @@ class ConsultationValidationTests(unittest.TestCase):
                 "tasks": [],
             },
         )
+        compatibility = self.release_identity["compatibility"]
+        assert isinstance(compatibility, dict)
+        reader = compatibility["reader"]
+        writer = copy.deepcopy(compatibility["writer"])
+        assert isinstance(writer, dict)
+        self._write_json(
+            "docs/pm/AGENTDESK.lock.json",
+            {
+                "schema_version": "agentdesk.project-lock/v1",
+                "project_id": "consultation-test",
+                "skill": {
+                    "release": self.release_identity["skill_release"],
+                    "source_commit": self.release_identity["source_commit"],
+                    "bundle_sha256": self.release_identity["bundle_sha256"],
+                },
+                "protocol": {
+                    "version": self.release_identity["protocol_version"],
+                },
+                "schemas": copy.deepcopy(
+                    self.release_identity["schema_set"]["schemas"]
+                ),
+                "runtime_adapter": copy.deepcopy(
+                    self.release_identity["runtime_adapter"]
+                ),
+                "operation_compatibility": {
+                    "reader": copy.deepcopy(reader),
+                    "writer": writer,
+                },
+            },
+        )
 
     def _run_renderer(self, *extra: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
                 sys.executable,
-                str(RENDERER_PATH),
+                str(self.renderer_path),
                 "--project",
                 str(self.project),
                 *extra,
@@ -545,6 +679,26 @@ class ConsultationValidationTests(unittest.TestCase):
                 self.assertIn("orphaned", rendered.stdout)
         self.assertFalse((self.project / "docs/pm/BOARD.md").exists())
         self.assertFalse((self.project / "docs/pm/STATUS.md").exists())
+
+    def test_renderer_write_gate_blocks_legacy_unpinned_without_writing(self) -> None:
+        self._tasks_state()
+        (self.project / "docs/pm/AGENTDESK.lock.json").unlink()
+        before = {
+            path.relative_to(self.project).as_posix(): path.read_bytes()
+            for path in self.project.rglob("*")
+            if path.is_file()
+        }
+
+        rendered = self._run_renderer()
+
+        self.assertEqual(1, rendered.returncode, rendered.stdout)
+        self.assertIn("legacy_unpinned", rendered.stdout)
+        after = {
+            path.relative_to(self.project).as_posix(): path.read_bytes()
+            for path in self.project.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(before, after)
 
     def test_valid_public_and_runtime_records_pass(self) -> None:
         record = self._record()
@@ -1939,6 +2093,9 @@ class ConsultationValidationTests(unittest.TestCase):
             RENDERER,
             "_validate_consultation_sources",
             side_effect=replace_disk_then_validate,
+        ), mock.patch.object(
+            RENDERER,
+            "_require_version_compatibility",
         ), redirect_stdout(output):
             exit_code = RENDERER.main(["--project", str(self.project)])
 
@@ -1977,6 +2134,9 @@ class ConsultationValidationTests(unittest.TestCase):
         output = io.StringIO()
         with mock.patch.object(
             RENDERER.os, "replace", side_effect=fail_third_stage
+        ), mock.patch.object(
+            RENDERER,
+            "_require_version_compatibility",
         ), redirect_stdout(output):
             exit_code = RENDERER.main(["--project", str(self.project)])
 

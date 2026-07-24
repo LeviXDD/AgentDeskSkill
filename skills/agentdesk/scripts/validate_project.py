@@ -21,6 +21,7 @@ from typing import Any, Iterable, Optional
 
 
 STATE_FILE = Path("docs/pm/state/tasks.yaml")
+PROJECT_LOCK_FILE = Path("docs/pm/AGENTDESK.lock.json")
 ROLE_POLICY_FILE = Path("docs/pm/ROLE-POLICIES.yaml")
 MODEL_BINDINGS_FILE = Path(".agentdesk/runtime/model-bindings.yaml")
 RUNTIME_PRIVATE_FILES = (
@@ -222,6 +223,65 @@ class Reporter:
             f"{self.passes} pass(es), {self.warnings} warning(s), "
             f"{self.errors} error(s)"
         )
+
+
+def _validate_release_compatibility(
+    project: Path, operation: str, reporter: Reporter
+) -> Optional[dict[str, Any]]:
+    """Run the standalone version gate without importing mutable local code."""
+
+    checker = Path(__file__).resolve().with_name("check_compatibility.py")
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(checker),
+                "--project",
+                str(project),
+                "--operation",
+                operation,
+                "--json",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        reporter.error(f"cannot run AgentDesk version compatibility gate: {exc}")
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        detail = result.stderr.strip() or result.stdout.strip() or "no output"
+        reporter.error(
+            "AgentDesk version compatibility gate returned invalid JSON: "
+            f"{detail}"
+        )
+        return None
+    if not isinstance(payload, dict):
+        reporter.error("AgentDesk version compatibility gate returned a non-object")
+        return None
+    for item in payload.get("warnings", []):
+        if isinstance(item, dict):
+            reporter.warn(
+                "version compatibility "
+                f"{item.get('code', 'warning')}: {item.get('message', '')}"
+            )
+    for item in payload.get("errors", []):
+        if isinstance(item, dict):
+            reporter.error(
+                "version compatibility "
+                f"{item.get('code', 'error')}: {item.get('message', '')}"
+            )
+    if result.returncode != 0 and not payload.get("errors"):
+        reporter.error(
+            "AgentDesk version compatibility gate failed without a diagnostic"
+        )
+    elif result.returncode == 0 and not payload.get("warnings"):
+        reporter.passed(f"AgentDesk version compatibility permits {operation}")
+    return payload
 
 
 def _is_int(value: Any) -> bool:
@@ -724,6 +784,19 @@ def _validate_project_layout(project: Path, reporter: Reporter) -> None:
         else:
             reporter.error(f"required file is missing: {relative.as_posix()}")
 
+    lock_path = project / PROJECT_LOCK_FILE
+    if lock_path.exists() or lock_path.is_symlink():
+        if _layout_path_is_safe(project, PROJECT_LOCK_FILE, reporter):
+            if lock_path.is_file():
+                reporter.passed(
+                    f"project version lock exists: {PROJECT_LOCK_FILE.as_posix()}"
+                )
+            else:
+                reporter.error(
+                    "project version lock is not a regular file: "
+                    f"{PROJECT_LOCK_FILE.as_posix()}"
+                )
+
     gitignore = project / ".gitignore"
     if not gitignore.is_file():
         return
@@ -816,7 +889,7 @@ def _validate_git_worktree(
         reporter.warn("could not verify the repository HEAD")
     elif head_commit:
         reporter.passed("repository HEAD resolves to a full commit SHA")
-        control_paths = (
+        control_paths = [
             "AGENTS.md",
             "docs/pm/state/tasks.yaml",
             "docs/pm/BOARD.md",
@@ -827,7 +900,12 @@ def _validate_git_worktree(
             "docs/pm/DECISIONS.md",
             "docs/pm/PM-PLAYBOOK.md",
             ".gitignore",
-        )
+        ]
+        if (
+            (project / PROJECT_LOCK_FILE).exists()
+            or (project / PROJECT_LOCK_FILE).is_symlink()
+        ):
+            control_paths.append(PROJECT_LOCK_FILE.as_posix())
         if not require_committed:
             reporter.warn(
                 "pre-commit mode: canonical state/views may differ from HEAD until the "
@@ -3715,6 +3793,56 @@ def _validate_report_and_acceptance_paths(
         reporter.error(f"{context}.acceptance_path must be null while state={state!r}")
 
 
+def _validate_attempt_version_lock(
+    project: Path,
+    task: dict[str, Any],
+    state: str,
+    task_card_commit: Any,
+    context: str,
+    reporter: Reporter,
+) -> None:
+    """Prove an active attempt has not crossed the committed project lock."""
+
+    lock_path = project / PROJECT_LOCK_FILE
+    if lock_path.is_symlink() or not lock_path.is_file():
+        return
+    attempt_is_active = (
+        task.get("current_dispatch") is not None
+        or state in ACTIVE_DISPATCH_STATES
+        or (
+            state == "blocked"
+            and task.get("blocked_attempt_valid") is not False
+            and task.get("attempt", 0) != 0
+        )
+    )
+    if not attempt_is_active:
+        return
+    if not isinstance(task_card_commit, str) or SHA_RE.fullmatch(task_card_commit) is None:
+        return
+    frozen_lock = _git_read_blob(
+        project, task_card_commit, PROJECT_LOCK_FILE.as_posix()
+    )
+    if frozen_lock is None:
+        reporter.error(
+            f"{context} active attempt task_card_commit must contain "
+            f"{PROJECT_LOCK_FILE.as_posix()}"
+        )
+        return
+    try:
+        current_lock = lock_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        reporter.error(f"cannot read current project version lock: {exc}")
+        return
+    if frozen_lock != current_lock:
+        reporter.error(
+            f"{context} active attempt crosses an AgentDesk version-lock change"
+        )
+    else:
+        reporter.passed(
+            f"{context} active attempt uses the version lock frozen at task_card_commit"
+        )
+
+
 def _validate_task(
     project: Path,
     raw_task: Any,
@@ -3858,6 +3986,15 @@ def _validate_task(
                 active_roles,
                 reporter,
             )
+
+    _validate_attempt_version_lock(
+        project,
+        task,
+        state,
+        task_card_commit,
+        context,
+        reporter,
+    )
 
     dispatch_id = _validate_dispatch(task, context, state, attempt, reporter)
     if dispatch_id is not None:
@@ -4106,6 +4243,7 @@ def validate(
     project: Path,
     require_committed: bool = True,
     allow_legacy_model_evidence: bool = False,
+    compatibility_operation: str = "validate",
 ) -> Reporter:
     reporter = Reporter(
         allow_legacy_model_evidence=allow_legacy_model_evidence
@@ -4117,6 +4255,9 @@ def validate(
         reporter.error(f"project path is not a directory: {project}")
         return reporter
     project = project.resolve()
+    compatibility = _validate_release_compatibility(
+        project, compatibility_operation, reporter
+    )
     _validate_project_layout(project, reporter)
     _validate_runtime_privacy(project, reporter)
     _validate_git_worktree(project, reporter, require_committed)
@@ -4142,6 +4283,19 @@ def validate(
     state = _load_state(state_path, reporter)
     if state is None:
         return reporter
+    lock_summary = (
+        compatibility.get("project_lock")
+        if isinstance(compatibility, dict)
+        else None
+    )
+    if isinstance(lock_summary, dict) and lock_summary.get("state") == "pinned":
+        if lock_summary.get("project_id") != state.get("project_id"):
+            reporter.error(
+                f"{PROJECT_LOCK_FILE.as_posix()} project_id must equal "
+                f"{STATE_FILE.as_posix()} project_id"
+            )
+        else:
+            reporter.passed("project version lock project_id matches canonical state")
     tasks = _validate_top_level(state, reporter)
     if tasks is None:
         return reporter
@@ -4200,16 +4354,38 @@ def _build_parser() -> argparse.ArgumentParser:
             "attestations and transport receipts for active task states"
         ),
     )
+    parser.add_argument(
+        "--allow-development-release",
+        action="store_true",
+        help=(
+            "test-only: keep pre-commit validation read-only when the bundled "
+            "release identity is development/unverified; this never authorizes "
+            "project writes or dispatch"
+        ),
+    )
     return parser
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.allow_development_release and not args.pre_commit:
+        parser.error("--allow-development-release requires --pre-commit")
     reporter = validate(
         Path(args.project).expanduser(),
         require_committed=not args.pre_commit,
         allow_legacy_model_evidence=args.allow_legacy_model_evidence,
+        compatibility_operation=(
+            "validate"
+            if args.allow_development_release
+            else ("write" if args.pre_commit else "validate")
+        ),
     )
+    if args.allow_development_release:
+        reporter.warn(
+            "development-release validation was explicitly enabled; this result "
+            "does not authorize project writes, dispatch, acceptance, or migration"
+        )
     reporter.summary()
     runtime_failed = False
     if args.require_runtime:

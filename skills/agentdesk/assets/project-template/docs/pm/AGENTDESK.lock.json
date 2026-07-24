@@ -1,0 +1,100 @@
+{
+  "schema_version": "agentdesk.project-lock/v1",
+  "project_id": "{{PROJECT_ID}}",
+  "skill": {
+    "release": "{{AGENTDESK_SKILL_RELEASE}}",
+    "source_commit": {{AGENTDESK_SOURCE_COMMIT_JSON}},
+    "bundle_sha256": {{AGENTDESK_BUNDLE_SHA256_JSON}}
+  },
+  "protocol": {
+    "version": "agentdesk.protocol/v2"
+  },
+  "schemas": {
+    "acceptance": "agentdesk.acceptance/v2",
+    "check_catalog": "agentdesk.check-catalog/v1",
+    "consultation": "agentdesk.consultation/v1",
+    "consultation_brief": "agentdesk.consultation-brief/v1",
+    "consultation_policy": "agentdesk.consultation-policy/v1",
+    "consultation_response": "agentdesk.consultation-response/v1",
+    "consultation_runtime": "agentdesk.consultation-runtime/v1",
+    "consultation_synthesis": "agentdesk.consultation-synthesis/v1",
+    "delivery_report": "agentdesk.delivery-report/v2",
+    "model_bindings": "agentdesk.model-bindings/v1",
+    "outbox_message": "agentdesk.outbox-message/v2",
+    "pm_lease": "agentdesk.pm-lease/v1",
+    "role_policies": "agentdesk.role-policies/v1",
+    "routes": "agentdesk.routes/v2",
+    "state_event": "agentdesk.state-event/v2",
+    "task_card": "agentdesk.task-card/v2",
+    "tasks": "agentdesk.tasks/v2",
+    "transport_receipts": "agentdesk.transport-receipts/v1"
+  },
+  "runtime_adapter": {
+    "id": "codex",
+    "contract_version": "agentdesk.codex-runtime-adapter/v1",
+    "runtime_schemas": {
+      "routes": "agentdesk.routes/v2",
+      "transport_receipts": "agentdesk.transport-receipts/v1"
+    }
+  },
+  "operation_compatibility": {
+    "reader": {
+      "protocol_versions": [
+        "agentdesk.protocol/v2"
+      ],
+      "schema_versions": [
+        "agentdesk.acceptance/v2",
+        "agentdesk.check-catalog/v1",
+        "agentdesk.consultation-brief/v1",
+        "agentdesk.consultation-policy/v1",
+        "agentdesk.consultation-response/v1",
+        "agentdesk.consultation-runtime/v1",
+        "agentdesk.consultation-synthesis/v1",
+        "agentdesk.consultation/v1",
+        "agentdesk.delivery-report/v2",
+        "agentdesk.model-bindings/v1",
+        "agentdesk.outbox-message/v2",
+        "agentdesk.pm-lease/v1",
+        "agentdesk.role-policies/v1",
+        "agentdesk.routes/v2",
+        "agentdesk.state-event/v2",
+        "agentdesk.task-card/v2",
+        "agentdesk.tasks/v2",
+        "agentdesk.transport-receipts/v1"
+      ],
+      "runtime_adapter_contracts": [
+        "agentdesk.codex-runtime-adapter/v1"
+      ]
+    },
+    "writer": {
+      "protocol_versions": [
+        "agentdesk.protocol/v2"
+      ],
+      "schema_versions": [
+        "agentdesk.acceptance/v2",
+        "agentdesk.check-catalog/v1",
+        "agentdesk.consultation-brief/v1",
+        "agentdesk.consultation-policy/v1",
+        "agentdesk.consultation-response/v1",
+        "agentdesk.consultation-runtime/v1",
+        "agentdesk.consultation-synthesis/v1",
+        "agentdesk.consultation/v1",
+        "agentdesk.delivery-report/v2",
+        "agentdesk.model-bindings/v1",
+        "agentdesk.outbox-message/v2",
+        "agentdesk.pm-lease/v1",
+        "agentdesk.role-policies/v1",
+        "agentdesk.routes/v2",
+        "agentdesk.state-event/v2",
+        "agentdesk.task-card/v2",
+        "agentdesk.tasks/v2",
+        "agentdesk.transport-receipts/v1"
+      ],
+      "runtime_adapter_contracts": [
+        "agentdesk.codex-runtime-adapter/v1"
+      ],
+      "requires_exact_release": true,
+      "requires_verified_bundle": true
+    }
+  }
+}
