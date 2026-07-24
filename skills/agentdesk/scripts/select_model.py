@@ -22,6 +22,7 @@ from typing import Any, Optional, Sequence
 
 
 ROLE_POLICY_FILE = Path("docs/pm/ROLE-POLICIES.yaml")
+PROJECT_LOCK_FILE = Path("docs/pm/AGENTDESK.lock.json")
 MODEL_BINDINGS_FILE = Path(".agentdesk/runtime/model-bindings.yaml")
 ROLE_POLICY_SCHEMA_VERSION = "agentdesk.role-policies/v1"
 MODEL_BINDINGS_SCHEMA_VERSION = "agentdesk.model-bindings/v1"
@@ -215,6 +216,103 @@ def _load_policy_at_commit(project: Path, commit: str) -> dict[str, Any]:
         raw,
         f"role policy at {commit}:{repository_path}",
     )
+
+
+def _require_dispatch_version_lock(project: Path, commit: str) -> None:
+    """Require a verified current Writer and the same lock at card commit."""
+
+    if FULL_SHA_RE.fullmatch(commit) is None:
+        raise SelectionError(
+            "--task-card-commit must be a full 40-character hexadecimal SHA"
+        )
+    checker = Path(__file__).resolve().with_name("check_compatibility.py")
+    try:
+        compatibility = subprocess.run(
+            [
+                sys.executable,
+                str(checker),
+                "--project",
+                str(project),
+                "--operation",
+                "write",
+                "--json",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SelectionError(
+            f"cannot run AgentDesk version compatibility gate: {exc}"
+        ) from exc
+    if compatibility.returncode != 0:
+        try:
+            payload = json.loads(compatibility.stdout)
+        except json.JSONDecodeError:
+            detail = (
+                compatibility.stderr.strip()
+                or compatibility.stdout.strip()
+                or "no diagnostic"
+            )
+        else:
+            errors = payload.get("errors", []) if isinstance(payload, dict) else []
+            detail = "; ".join(
+                str(item.get("message", ""))
+                for item in errors
+                if isinstance(item, dict)
+            ) or "write compatibility denied"
+        raise SelectionError(f"dispatch version gate failed: {detail}")
+
+    current_lock = _load_worktree_json_object(
+        project, PROJECT_LOCK_FILE, "project version lock"
+    )
+    repository_path = PROJECT_LOCK_FILE.as_posix()
+    tree_entry = _run_git(
+        project, ["ls-tree", "-z", commit, "--", repository_path]
+    )
+    entries = (
+        [entry for entry in tree_entry.stdout.split(b"\0") if entry]
+        if tree_entry.returncode == 0
+        else []
+    )
+    valid_regular_blob = False
+    if len(entries) == 1 and b"\t" in entries[0]:
+        metadata, returned_path = entries[0].split(b"\t", 1)
+        parts = metadata.split()
+        valid_regular_blob = (
+            returned_path.decode("utf-8", errors="surrogateescape")
+            == repository_path
+            and len(parts) == 3
+            and parts[0] in {b"100644", b"100755"}
+            and parts[1] == b"blob"
+        )
+    if not valid_regular_blob:
+        raise SelectionError(
+            f"task-card commit {commit} must contain regular "
+            f"{repository_path}; an attempt cannot start without a frozen version lock"
+        )
+    blob = _run_git(project, ["show", f"{commit}:{repository_path}"])
+    if blob.returncode != 0:
+        raise SelectionError(
+            f"cannot read project version lock at task-card commit {commit}: "
+            f"{_git_error_detail(blob.stderr)}"
+        )
+    try:
+        frozen_lock = _parse_json_object(
+            blob.stdout.decode("utf-8"),
+            f"project version lock at {commit}:{repository_path}",
+        )
+    except UnicodeDecodeError as exc:
+        raise SelectionError(
+            f"project version lock at task-card commit {commit} is not UTF-8"
+        ) from exc
+    if frozen_lock != current_lock:
+        raise SelectionError(
+            "current project version lock differs from task-card commit; "
+            "an attempt must not cross AgentDesk releases"
+        )
 
 
 def _require_schema(
@@ -656,6 +754,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 project, ROLE_POLICY_FILE, "role policy"
             )
         else:
+            _require_dispatch_version_lock(project, args.task_card_commit)
             policy = _load_policy_at_commit(project, args.task_card_commit)
         bindings = _load_worktree_json_object(
             project, MODEL_BINDINGS_FILE, "model bindings"

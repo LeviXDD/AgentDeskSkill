@@ -1,0 +1,146 @@
+# 新项目快速开始
+
+本页以 Codex Desktop 和 Standard 模式为例。第一次使用时，先在非关键仓库跑通完整闭环。
+
+## 环境要求
+
+- Python 3.9 或更高版本；
+- Git；
+- 能加载本地 Skill 的 Codex 环境；
+- Standard 还要求运行时能够创建、命名、读取并跨任务发送消息；
+- 项目需要一个真实仓库根目录，而不是另一个仓库里的嵌套目录。
+
+## 安装
+
+安装公开 beta 的固定版本：
+
+```bash
+python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo LeviXDD/AgentDeskSkill \
+  --path skills/agentdesk \
+  --ref v0.1.0-beta
+```
+
+这条命令安装的是旧版公开基线。`v0.1.0-beta` 尚不包含版本锁、不可变发布包和圆桌
+咨询；本页后续涉及这些能力的说明适用于下一版本候选。候选源码目录只能用于审阅、
+测试和只读影子校验，不能直接作为生产写入版本。需要试用候选版时，先按
+[公开分享与平台兼容](10-sharing-and-portability.md#构建并激活下一版本)从固定 commit
+构建只读发布包。
+
+安装后重新打开或刷新 Codex，确认 Skill 列表中出现 `$agentdesk`。如果本机仍显示旧名称 `$task-card-agent-dev`，不要同时让两个版本操作同一个项目；先完成旧名称迁移，见[公开分享与平台兼容](10-sharing-and-portability.md)。
+
+不要把全局 Skill 路径直接链接到一个正在编辑的源码仓库。稳定版应指向只读发布目录，开发工作在独立 candidate 分支或 worktree 中进行。详见[版本隔离与安全升级](12-version-isolation-and-upgrades.md)。
+
+## 第一次初始化：推荐提示词
+
+对于空目录：
+
+```text
+使用 $agentdesk 以 Standard 模式初始化当前空目录。
+我明确授权为该目录初始化 Git；先执行 dry-run，
+不要创建任何用户可见岗位任务。
+
+完成仓库分析后，请提出最小岗位集合、精确任务名称和创建数量，
+等我确认后继续。
+```
+
+对于已经存在的 Git 仓库，去掉“授权初始化 Git”，并明确要求保留现有内容：
+
+```text
+使用 $agentdesk 以 Standard 模式初始化当前 Git 仓库。
+先执行 dry-run；复用现有 AGENTS.md 和 docs/pm，
+不覆盖文件，不修改业务代码，不创建用户可见岗位任务。
+```
+
+## 初始化命令
+
+Skill 实际执行的核心命令为：
+
+```bash
+python3 <skill-dir>/scripts/init_project.py \
+  --project <repo> \
+  --mode standard \
+  --dry-run
+
+python3 <skill-dir>/scripts/init_project.py \
+  --project <repo> \
+  --mode standard
+```
+
+空目录且已明确授权创建 Git 仓库时，两条命令都加入 `--init-git`。已有 Git worktree 不使用该参数。
+
+初始化器具有保守的幂等行为：它不会覆盖已有文件。出现 `MANUAL_MERGE` 时，应检查差异并把必要规则合并到现有文件，而不是建立第二套并行控制面。
+
+版本隔离发布会同时生成 `docs/pm/AGENTDESK.lock.json`。初始化器不是版本升级器：旧 AgentDesk 项目缺少 lock 时，dry-run 只做诊断，正式执行会在任何写入前停止。升级必须走显式迁移，不得通过重跑初始化器自动补锁。
+
+## 初始化后必须补齐的项目事实
+
+初始化不等于已经可以派卡。至少完成以下配置：
+
+1. 在 `AGENTS.md` 填写项目目标、目录地图、构建和测试方式；
+2. 在 `docs/pm/ROLES.md` 只启用真正需要的岗位；
+3. 确保每个岗位拥有唯一 `role_no`、`role_id`、`role_name`；
+4. 在 `ROLE-POLICIES.yaml` 配置岗位模型等级、推理深度和能力要求；
+5. 在 `CHECKS.yaml` 登记可安全自动运行的检查 ID；
+6. 确保仓库已有一个真实 baseline commit；
+7. 保持 `tasks.yaml` 为空，直到第一张需求和验收标准已经具体；
+8. 建立 gitignored `.agentdesk/runtime/`，但不向 Git 提交任何会话 ID、绝对路径或回执。
+9. 确认 `AGENTDESK.lock.json` 与当前不可变 Skill 发布包兼容；开发态或无法验证 digest 的候选版不得开始项目写入。
+
+## 创建岗位任务需要第二次明确授权
+
+“初始化项目”“开始开发”或“使用 Skill”不代表允许创建 Codex 侧边栏中的新任务。Leader 应先列出拟创建的规范标题，然后等待确认。
+
+示例：
+
+```text
+我确认启用以下岗位，并明确授权创建这些独立可见任务：
+
+R1 . 开发工程师
+R2 . QA 工程师
+
+请完成任务创建、精确命名、读取复验、独立 worktree 绑定和运行时校验，
+然后再派发任务卡。
+```
+
+获得授权后，Standard 必须完成以下能力链：
+
+```text
+确认目标项目或 worktree 上下文
+→ 按当前宿主 schema 调用 create_thread
+→ 等待异步创建结果
+→ set_thread_title
+→ read/list 复验真实任务与标题
+→ route 标记 verified
+→ 提交派发意图
+→ send_message_to_thread
+```
+
+公开 beta 的低层适配器参考仍写有固定的 `list_projects → create_thread → ...` 工具链，但 Codex 宿主工具契约可能随版本变化。执行时必须先发现当前可用能力和参数；异步创建还必须等待结果，不能把“已排队”当成“任务已创建”。缺少等价的创建、等待、改名、读取或发送能力时，应降为 Lite 或停在门禁处。
+
+独立 branch/worktree 的建立与绑定由持有 lease 的 PM 通过当前运行时适配器完成，并以冻结的 `base_commit` 为起点。用户无需自行猜测平台命令；如果 worktree 无法安全创建、不是独立目录或 HEAD 不匹配，任务保持 Ready/Blocked，不得先派发再补证据。
+
+## 第一张任务卡
+
+第一张卡应尽量小，避免同时验证太多复杂能力。建议选择：
+
+- 一个边界清楚的局部功能；
+- 一个开发岗位和一个可选 QA 岗位；
+- 无生产凭据、无不可逆迁移；
+- 有明确的构建或测试命令；
+- 可以在独立 worktree 完成；
+- 能走完实现提交、报告提交、主动回调、验收和集成。
+
+## 第一次派发前检查
+
+- [ ] 任务卡及岗位策略已进入不可变 `task_card_commit`；
+- [ ] `base_commit` 是完整 SHA；
+- [ ] 依赖、路径、冲突面和风险已明确；
+- [ ] PM 与 Worker 是不同的真实任务；
+- [ ] 实际标题严格等于 `<role_no> . <role_name>`；
+- [ ] Worker 有独立 worktree；
+- [ ] PM callback route 与 Worker route 都是 `verified`；
+- [ ] 模型选择器能找到满足硬要求的 binding；
+- [ ] repository validation 与 runtime validation 均通过。
+
+初始化完成后，日常使用不需要反复初始化。请切换到 [项目运行手册](05-operating-guide.md) 的 PM 工作流。

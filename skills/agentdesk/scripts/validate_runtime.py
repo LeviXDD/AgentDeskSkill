@@ -21,6 +21,7 @@ from typing import Any, Iterable
 ROUTES_SCHEMA = "agentdesk.routes/v2"
 RECEIPTS_SCHEMA = "agentdesk.transport-receipts/v1"
 TASKS_SCHEMA = "agentdesk.tasks/v2"
+CONSULTATION_ROLE_NO_RE = re.compile(r"^C[0-9]{3}\.[0-9]{2}$")
 ACTIVE_TASK_STATES = {"dispatched", "in_progress", "review_ready"}
 DISPATCH_SENT_STATES = {"sent", "acknowledged"}
 CODEX_THREAD_ID = re.compile(
@@ -143,6 +144,10 @@ def _load_roles(project: Path, reporter: Reporter) -> dict[str, Role]:
         if not all((role.role_no, role.role_id, role.role_name, role.status)):
             reporter.error("every role row must define role_no, role_id, role_name, and Status")
             continue
+        if CONSULTATION_ROLE_NO_RE.fullmatch(role.role_no):
+            reporter.error(
+                f"execution role {role.role_id} uses reserved consultation seat number {role.role_no!r}"
+            )
         expected_title = cells[indexes["expected_thread_title"]]
         if expected_title != role.expected_title:
             reporter.error(

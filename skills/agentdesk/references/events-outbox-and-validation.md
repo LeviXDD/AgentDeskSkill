@@ -1,6 +1,6 @@
 # 事件、Outbox、消息与校验
 
-本参考给出控制面事件、outbox 消息、本机运行时镜像、角色消息、状态提交顺序与校验不变量。任务账本、任务卡、交付报告和验收记录的字段与模板见 [数据模型、Schema 与模板](schemas-and-templates.md)。
+本参考给出**执行任务**控制面事件、outbox 消息、本机运行时镜像、角色消息、状态提交顺序与校验不变量。任务账本、任务卡、交付报告和验收记录的字段与模板见 [数据模型、Schema 与模板](schemas-and-templates.md)。咨询使用独立记录与 receipt 命名空间，见 [圆桌研讨与咨询协议](consultation-protocol.md)。
 
 ## 目录
 
@@ -9,6 +9,7 @@
 - [消息模板](#9-消息模板)
 - [状态与提交写入顺序](#10-状态与提交写入顺序)
 - [校验不变量](#11-校验不变量)
+- [咨询消息与 receipt 边界](#12-咨询消息与-receipt-边界)
 
 ## 7. Event 与 outbox 模板
 
@@ -341,7 +342,7 @@ blocked_reason：<none-or-reason>
 
 PM 必须持有逻辑 lease；`mode: timed` 时还要验证本机/协调器 lease 未过期。随后校验依赖、冲突面、owner approval，并在状态迁移前验证 PM/岗位真实 task、精确标题、host、独立 worktree、single-flight 和 callback route；新建 Codex 可见任务还必须有显式用户授权。分配 attempt/dispatch ID，并使用完整 `task_card_commit` 运行确定性 `scripts/select_model.py`。若 `require_pm_approval` 发生降级，先生成匹配 approval event（可与派发同 commit）；再将 selector 的九字段 JSON 原样复制进账本和 outbox。finalize outbox 后计算其 raw-byte digest，写 `TASK_DISPATCHED` event，运行 pre-commit 结构检查，并把首次 `current_dispatch`、event、outbox、账本和视图一并提交。strict 通过后才向 verified thread 投递并写 dispatch receipt；投递失败只重放同一 outbox，不生成新 attempt，也不进入 `InProgress`。
 
-一次 dispatch 只冻结一个 primary execution binding。未经声明不得把实质工作委派给更弱或未记录的子 Agent；承担实质性目标、改动或验收证据的 subagent 必须获得自己的 dispatch/execution evidence。仅做非实质机械辅助且不影响结论的工具调用不产生第二权威执行者。
+一次 dispatch 只冻结一个 primary execution binding。未经声明不得把实质工作委派给更弱或未记录的子 Agent；承担实现、测试或验收证据的 subagent 必须获得自己的 dispatch/execution evidence。只提供只读决策建议的咨询席使用 consultation evidence，不能修改实现或替代执行证据。仅做非实质机械辅助且不影响结论的工具调用不产生第二权威执行者。
 
 ### 交付入账
 
@@ -386,6 +387,19 @@ PM 按 base commit 审查 diff、源码、检查结果和范围并写 acceptance
 `--allow-legacy-model-evidence` 仅用于盘点 legacy terminal record 的迁移审计；即使退出码为零也不是 strict pass，不能用于自动验收、自动派发或 CI 放行。正常 strict 必须不带此参数。
 
 bundled validator 会实际对账上述 event/outbox Git 证据，但不证明真实 Codex task/thread、精确标题、provider execution receipt、消息送达或 callback receipt，不判断所有 `guard_results` 是否语义完整，也不替代对 `CHECKS.yaml` 安全性与真实实现 diff/路径范围的 PM/CI 审查。缺少 runtime dispatcher/adapter 或独立运行时检查时，不得因 bundled validator 通过而宣称闭环成立。
+
+## 12. 咨询消息与 receipt 边界
+
+咨询不是 execution dispatch，不产生 `TASK_DISPATCHED` event、`task.dispatch` outbox、Worker report 或 acceptance record。它使用以下独立身份：
+
+- prompt：`<seat_id>.R<round>`，例如 `C001.01.R1`；
+- response：同一席位与轮次的稳定 `response_id`；
+- callback：独立 `callback_id`，传输重试复用同一 ID、payload 和 Leader source target；
+- runtime receipt：只写 `.agentdesk/runtime/consultations.yaml`，不得混入 `routes.yaml` 或 `transport-receipts.yaml`。
+
+第一轮所有席位必须收到同一公开 brief digest，仅允许附加各自预先声明的 focus。咨询席在自己的任务里留下最终答复不等于回调；Leader 只有在真实跨任务消息被观察并记录 response receipt 后，才能标记 received。若 transport 只能证明发送、不能证明 Leader 已观察，保持 `sent`/未确认，不得伪造 `received`。
+
+公开 `consultation.yaml` 记录 response artifact 的 ID、状态与路径，但不保存 thread/host/provider receipt。`validate_consultations.py` 可校验结构、边界和已声明 artifact；它不能单独证明用户真实授权、task 实际存在、标题已设置或消息已送达。真实工具核验与恢复顺序见 [圆桌研讨与咨询协议](consultation-protocol.md)。
 
 ### 完成标准
 

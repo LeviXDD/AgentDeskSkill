@@ -18,6 +18,8 @@ conflict_surfaces:
   contracts: []
   migrations: []
 required_checks: []
+source_consultation_id: null
+source_confirmation_id: null
 owner_approval:
   gate: none
   required_capabilities: []

@@ -1,0 +1,12 @@
+{
+  "schema_version": "agentdesk.consultation-policy/v1",
+  "enabled": true,
+  "authorization_mode": "ask",
+  "max_seats": 3,
+  "max_rounds": 2,
+  "require_independent_first_round": true,
+  "allow_recursive_sessions": false,
+  "default_access": "read_only",
+  "require_leader_synthesis": true,
+  "require_owner_confirmation_for_derivation": true
+}

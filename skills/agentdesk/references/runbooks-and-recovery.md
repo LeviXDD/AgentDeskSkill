@@ -9,6 +9,7 @@
 - [Definition of Done](#4-definition-of-done)
 - [PM Runbook](#5-pm-runbook)
 - [开发、QA 与整合 Runbook](#6-开发角色-runbook)
+- [咨询 Runbook](#85-咨询-runbook)
 - [风险分层与审批](#9-风险分层与审批)
 - [Heartbeat 对账](#11-heartbeat只做-reconcile)
 - [故障场景与恢复](#12-故障场景与恢复表)
@@ -16,7 +17,7 @@
 - [Validator 检查](#15-validator--ci-检查列表)
 - [反模式与最小恢复口令](#16-反模式)
 
-本参考回答“谁在什么时候做什么，以及出错后怎样安全恢复”。字段定义与完整状态枚举以 [核心协议与状态机](protocol.md) 为准，任务、交付与验收模板见 [数据模型、Schema 与模板](schemas-and-templates.md)，事件、消息和校验格式见 [事件、Outbox 与校验](events-outbox-and-validation.md)；本参考不另造第二套协议。
+本参考回答“谁在什么时候做什么，以及出错后怎样安全恢复”。字段定义与完整状态枚举以 [核心协议与状态机](protocol.md) 为准，任务、交付与验收模板见 [数据模型、Schema 与模板](schemas-and-templates.md)，事件、消息和校验格式见 [事件、Outbox 与校验](events-outbox-and-validation.md)，只读研讨见 [圆桌研讨与咨询协议](consultation-protocol.md)；本参考不另造第二套协议。
 
 ## 1. 运行原则
 
@@ -30,6 +31,7 @@
 8. **恢复优先保全证据。**不得因为超时、不可见或冲突而删除分支、worktree、report 或日志。
 9. **Leader 定策略，runtime 做选择。**任务/风险只能抬高模型硬下限；模型强度永不授予审批、凭据、验收或发布权限。
 10. **真实岗位任务和主动 callback 不可降级。**Standard / Automated 使用独立、规范命名的真实任务；Worker 主动回调是主路径，heartbeat 只兜底。
+11. **咨询与执行正交。**咨询席只提供建议，不进 Active roles、任务状态机或验收链；Owner 确认咨询结论也不自动授权执行。
 
 ## 2. 开工前的最小不变量
 
@@ -173,7 +175,7 @@ DoR 未满足时只能保持 Draft/Blocked，不得靠“角色先做起来再�
 3. 遇到契约变化先报告，未经授权不扩大范围。
 4. 测试使用任务指定的受控命令；不读取或复制无关凭据。
 5. 外部副作用必须有匹配 capability 和事前 approval。
-6. 需要 material subagent 时先让 PM 创建独立 dispatch/execution evidence；模型更强也不能代替该授权。
+6. 需要承担实现、测试或验收证据的 material subagent 时，先让 PM 创建独立 dispatch/execution evidence；模型更强也不能代替该授权。只读决策顾问必须在执行之外按 consultation protocol 建席，且其建议不能冒充实现证据。
 
 ### 6.3 交付
 
@@ -226,6 +228,21 @@ QA 是合法 card type 和合法 role，可以拥有独立任务卡、worktree�
 8. PM 验收 integration commit 后，才能写 `Integrated` 并更新下游 base。
 
 整合角色不得因为“都是 Accepted”而自行选择版本，也不得顺手修改未授权业务逻辑。
+
+## 8.5 咨询 Runbook
+
+1. Leader 先判断是否需要外部视角：清晰简单问题使用零席；单一专业缺口一席；真实方案权衡两席；跨域或高影响争议最多三席。
+2. 冻结一个议题、共同事实、非目标、每席 focus、精确标题、模型建议和最多两轮的 brief。创建可见任务前取得仅限该 consultation 的明确或有界批量授权。
+3. 按 [咨询协议](consultation-protocol.md) 创建并复验真实席位身份。所有席位只读、彼此隔离、不得开新会话；第一轮共享同一 brief digest。
+4. 每席主动回调 Leader source。缺失回调时先保全该席本地回答和 runtime 事实，复用同一 callback ID 重试；无法证明收到时标 missing/blocked，不写伪 receipt，也不自动新建替代席位。
+5. 只有会实质改变结论的分歧才开启第二轮；由 Leader 中立转述争议，复用原席位，不让席位直接互聊。
+6. Leader 综合收到与缺失席位，明确共识、条件性共识、分歧、少数意见、假设和置信度，不按票数拍板。
+7. Owner 选择 confirmed/rejected/deferred。仅 confirmed scope 可派生决策或候选任务卡；决策行与任务卡都双向引用 consultation/confirmation ID。随后仍按正常 PM gate 单独取得执行岗位创建与高风险动作授权。
+8. 运行 `render_views.py` 和 `validate_consultations.py`。只要创建过真实席位，再运行 `validate_consultations.py --project <repo> --require-runtime`，并通过宿主当次 read/list 复验 Leader route、不同席位 route、精确标题和回调送达。结构校验或本地 receipt 通过都不能替代这次实时核验。
+
+恢复时以公开 `consultation.yaml` 保留的计划/产物和本机 `consultations.yaml` 的真实 route/receipt 分开对账。runtime 丢失不会改变已持久化建议，但在重新发现 source、席位与标题前不得继续发消息或宣称多会话闭环。
+
+中途取消时填写 `cancellation_reason`，保留已经发生的两轮、回答和 receipt。不得把 `cancelled` 写成 confirmed/rejected/deferred，也不得删除第二轮来通过校验。
 
 ## 9. 风险分层与审批
 
@@ -368,7 +385,7 @@ Lite 仍不得共享 checkout、覆盖旧 report 或把 QA 当最终验收人。
 适合高并发和半无人值守：
 
 - 完整保留 Standard 的真实任务、精确命名、主动 callback 和 receipt 门槛；
-- 控制面使用 Git ref compare-and-swap 或事务写入器，原子更新权威 `tasks.yaml`；不得再引入第二个可变权威源；
+- 执行控制面使用 Git ref compare-and-swap 或事务写入器，原子更新权威 `tasks.yaml`；不得再引入第二个执行状态权威源；
 - 消息 provider receipt、ack、重试和 dead-letter 完整接入；
 - 自动 lease 续期、超时、孤儿任务检测和审计事件流；
 - 强制 capability sandbox、短期凭据和审批校验；
@@ -437,6 +454,8 @@ bundled validator 会对账 event/outbox 的结构、Git 原子性、摘要、�
 - 多个角色共享同一 checkout，只靠“注意不要切分支”。
 - 任务卡尚未提交就靠聊天全文派发。
 - 用同一 PM 任务切换岗位人格、subagent 或只有 worktree 来冒充独立岗位任务。
+- 把咨询席登记成 Active role、Worker、spike 或执行任务，或者让咨询席修改代码/控制面、验收、合并或继续创建会话。
+- 未获本议题有界授权就创建咨询任务；首轮互相泄露观点；按多数票代替 Leader 综合；未经 Owner 确认就把建议写成决策或任务卡。
 - 没有用户明确授权就创建侧边栏可见 Codex 任务，或在未获授权时静默同任务执行。
 - 让 Codex 自动标题保留为 `Await ...` / 任务描述，而不设置并验证 `<role_no> . <role_name>`。
 - 用移动分支名代替 `base_commit` 或冻结的 `implementation_commit`。
