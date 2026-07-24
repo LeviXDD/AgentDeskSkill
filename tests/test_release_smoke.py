@@ -70,10 +70,26 @@ class ReleaseSmokeTests(unittest.TestCase):
             self.assertTrue((REPO_ROOT / relative).is_file(), relative)
 
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("--repo LeviXDD/AgentDeskSkill", readme)
-        self.assertIn("--path skills/agentdesk", readme)
-        self.assertIn("--ref v0.1.0-beta", readme)
+        self.assertIn('release_tag="v0.2.0-beta"', readme)
+        self.assertIn("--branch \"$release_tag\"", readme)
+        self.assertIn("--source skills/agentdesk", readme)
+        self.assertIn("--release-id \"$release_tag\"", readme)
+        self.assertIn("--expected-release \"$release_tag\"", readme)
+        self.assertIn('codex_home="${CODEX_HOME:-$HOME/.codex}"', readme)
+        self.assertIn(
+            'test -z "$(git status --porcelain=v1 --untracked-files=all)"',
+            readme,
+        )
+        self.assertNotIn("--ref v0.2.0-beta", readme)
         self.assertIn("$agentdesk", readme)
+
+        source_manifest = json.loads(
+            (SKILL_ROOT / "release-manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("0.2.0-dev", source_manifest["skill_release"])
+        self.assertEqual("development", source_manifest["release_status"])
+        self.assertIsNone(source_manifest["source_commit"])
+        self.assertIsNone(source_manifest["bundle_sha256"])
 
         template_runtime = (
             "skills/agentdesk/assets/project-template/.agentdesk/runtime/routes.yaml"
@@ -97,6 +113,28 @@ class ReleaseSmokeTests(unittest.TestCase):
             cwd=REPO_ROOT,
         )
         self.assertEqual(root_runtime_ignore.returncode, 0, root_runtime_ignore.stdout)
+
+    def test_public_release_shell_blocks_are_fail_fast_and_valid(self) -> None:
+        documents = (
+            REPO_ROOT / "README.md",
+            REPO_ROOT / "docs" / "03-getting-started.md",
+            REPO_ROOT / "docs" / "10-sharing-and-portability.md",
+        )
+        selected_blocks: list[tuple[Path, str]] = []
+        for document in documents:
+            content = document.read_text(encoding="utf-8")
+            for block in re.findall(r"```bash\n(.*?)```", content, re.DOTALL):
+                if (
+                    'release_tag="v0.2.0-beta"' in block
+                    or 'backup_path="$backup_root/agentdesk-legacy-backup"' in block
+                ):
+                    selected_blocks.append((document, block))
+
+        self.assertEqual(5, len(selected_blocks))
+        for document, block in selected_blocks:
+            self.assertIn("(\n  set -eu\n", block, str(document))
+            parsed = run("sh", "-n", "-c", block, cwd=REPO_ROOT)
+            self.assertEqual(0, parsed.returncode, f"{document}:\n{parsed.stdout}")
 
     def test_skill_metadata_and_interface_match_public_name(self) -> None:
         skill_md = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")

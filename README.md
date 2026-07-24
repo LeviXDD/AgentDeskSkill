@@ -24,28 +24,66 @@ Standard requires Codex Desktop to expose task creation, naming, listing/reading
 - Git and a real repository root for durable workflow evidence.
 - A Codex environment that can load local Skills; Standard additionally requires Codex Desktop and the task operations described above.
 
-### Install
+### Install `v0.2.0-beta`
 
-Install the currently published, pinned beta with the bundled Skill installer:
+Build the current public beta from its fixed tag, then atomically activate the
+verified read-only bundle:
 
 ```bash
-python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo LeviXDD/AgentDeskSkill \
-  --path skills/agentdesk \
-  --ref v0.1.0-beta
+(
+  set -eu
+
+  release_tag="v0.2.0-beta"
+  repo_dir="AgentDeskSkill-$release_tag"
+  release_dir="$HOME/.local/share/agentdesk/releases/$release_tag"
+  codex_home="${CODEX_HOME:-$HOME/.codex}"
+  install_link="$codex_home/skills/agentdesk"
+
+  test ! -e "$repo_dir"
+  test ! -L "$repo_dir"
+  test ! -e "$release_dir"
+  test ! -L "$release_dir"
+
+  if { [ -e "$install_link" ] && [ ! -L "$install_link" ]; } ||
+     { [ -L "$install_link" ] && [ ! -e "$install_link" ]; }; then
+    echo "STOP: back up or repair $install_link before activation" >&2
+    exit 1
+  fi
+
+  git clone --depth 1 --branch "$release_tag" \
+    https://github.com/LeviXDD/AgentDeskSkill.git \
+    "$repo_dir"
+  cd "$repo_dir"
+  test "$(git describe --tags --exact-match HEAD)" = "$release_tag"
+
+  env PYTHONDONTWRITEBYTECODE=1 \
+    python3 -m unittest discover -s tests -p 'test_*.py'
+  test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+  python3 tools/build_skill_release.py \
+    --source skills/agentdesk \
+    --destination "$release_dir" \
+    --release-id "$release_tag"
+
+  python3 tools/activate_skill_release.py \
+    --release-directory "$release_dir" \
+    --install-link "$install_link" \
+    --expected-release "$release_tag" \
+    --dry-run
+
+  python3 tools/activate_skill_release.py \
+    --release-directory "$release_dir" \
+    --install-link "$install_link" \
+    --expected-release "$release_tag"
+)
 ```
 
-`v0.1.0-beta` is the legacy public baseline. It predates project locks,
-immutable release bundles, and consultation roundtables. The documentation on
-the development branch also describes the next release candidate; those
-capabilities are not retroactively present in the old tag.
-
-The next version must be built from a clean, fixed Git commit into a verified
-read-only release bundle before it may write a project. Installing its
-`skills/agentdesk` source directory directly produces a development identity
-for review and shadow validation, not a writable stable release. See
-[sharing and portability](docs/10-sharing-and-portability.md) for the candidate
-build/activation workflow.
+The tagged source intentionally retains a development manifest. Installing
+`skills/agentdesk` directly with the generic Skill installer creates a mutable,
+review-only identity; it is not a writer-eligible release. Existing
+`v0.1.0-beta` installations and projects are legacy and must be preserved or
+adopted explicitly. See [sharing and portability](docs/10-sharing-and-portability.md)
+for the exact installation, legacy-backup, and rollback procedure.
 
 ### Quick start
 
@@ -60,7 +98,7 @@ For a small project or a runtime without independent task tooling, request `Lite
 
 ### Version isolation
 
-Do not point the global Skill install at a mutable development checkout. Version-isolated releases use an immutable `release-manifest.json` plus a committed project `docs/pm/AGENTDESK.lock.json`; read-only checks may inspect an older unpinned project, but writes require an exact release/commit/bundle match. `v0.1.0-beta` predates project locks and is treated as `legacy-unpinned` by the candidate protocol—upgrade it explicitly, never by rerunning the initializer. See the [version isolation and upgrade guide](docs/12-version-isolation-and-upgrades.md).
+Do not point the global Skill install at a mutable development checkout. Version-isolated releases use an immutable `release-manifest.json` plus a committed project `docs/pm/AGENTDESK.lock.json`; read-only checks may inspect an older unpinned project, but writes require an exact release/commit/bundle match. `v0.1.0-beta` predates project locks and is treated as `legacy-unpinned` by the `v0.2.0-beta` protocol—adopt it explicitly, never by rerunning the initializer. See the [version isolation and upgrade guide](docs/12-version-isolation-and-upgrades.md).
 
 ### Optional advisory roundtables
 
@@ -72,11 +110,11 @@ Versioned task cards, logical role IDs, decisions, events, and acceptance eviden
 
 ### Beta status
 
-`v0.1.0-beta` is an early public legacy release. The version-lock and
-roundtable work documented here is a next-release candidate until a separate
-verified release is published. Protocols and schemas may change before
-`v1.0.0`; pin an actual published release, review generated diffs, and test on
-a non-critical repository first.
+`v0.2.0-beta` is the current public beta; `v0.1.0-beta` remains the legacy
+baseline. “Stable” in a built manifest means sealed and writer-eligible, not
+post-beta API stability. Protocols and schemas may change before `v1.0.0`;
+pin the tag, review generated diffs, and test on a non-critical repository
+first.
 
 ## 中文
 
@@ -100,24 +138,63 @@ Standard 需要 Codex Desktop 能够创建、命名、列出/读取并跨任务�
 - Git，且目标路径应是真实的仓库根目录。
 - 能够加载本地 Skill 的 Codex 环境；Standard 还需要 Codex Desktop 及上述任务操作能力。
 
-### 安装
+### 安装 `v0.2.0-beta`
 
-安装当前已经发布的固定 beta：
+从固定 tag 构建当前公开 beta，再原子激活经过校验的只读发布包：
 
 ```bash
-python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo LeviXDD/AgentDeskSkill \
-  --path skills/agentdesk \
-  --ref v0.1.0-beta
+(
+  set -eu
+
+  release_tag="v0.2.0-beta"
+  repo_dir="AgentDeskSkill-$release_tag"
+  release_dir="$HOME/.local/share/agentdesk/releases/$release_tag"
+  codex_home="${CODEX_HOME:-$HOME/.codex}"
+  install_link="$codex_home/skills/agentdesk"
+
+  test ! -e "$repo_dir"
+  test ! -L "$repo_dir"
+  test ! -e "$release_dir"
+  test ! -L "$release_dir"
+
+  if { [ -e "$install_link" ] && [ ! -L "$install_link" ]; } ||
+     { [ -L "$install_link" ] && [ ! -e "$install_link" ]; }; then
+    echo "STOP: back up or repair $install_link before activation" >&2
+    exit 1
+  fi
+
+  git clone --depth 1 --branch "$release_tag" \
+    https://github.com/LeviXDD/AgentDeskSkill.git \
+    "$repo_dir"
+  cd "$repo_dir"
+  test "$(git describe --tags --exact-match HEAD)" = "$release_tag"
+
+  env PYTHONDONTWRITEBYTECODE=1 \
+    python3 -m unittest discover -s tests -p 'test_*.py'
+  test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+  python3 tools/build_skill_release.py \
+    --source skills/agentdesk \
+    --destination "$release_dir" \
+    --release-id "$release_tag"
+
+  python3 tools/activate_skill_release.py \
+    --release-directory "$release_dir" \
+    --install-link "$install_link" \
+    --expected-release "$release_tag" \
+    --dry-run
+
+  python3 tools/activate_skill_release.py \
+    --release-directory "$release_dir" \
+    --install-link "$install_link" \
+    --expected-release "$release_tag"
+)
 ```
 
-`v0.1.0-beta` 是旧版公开基线，尚不包含项目版本锁、不可变发布包和圆桌咨询。
-开发分支上的文档同时描述了下一版本候选能力；这些能力不会自动出现在旧 tag 中。
-
-下一版本必须从干净、固定的 Git commit 构建为经过校验的只读发布包，才允许写入项目。
-直接安装其 `skills/agentdesk` 源码目录只会得到用于审阅和影子校验的 development
-身份，不是可写的 Stable 发布。候选版构建与激活流程见
-[公开分享与平台兼容](docs/10-sharing-and-portability.md)。
+tag 内的源码清单会刻意保持 development 身份。使用通用 Skill installer 直接复制
+`skills/agentdesk`，得到的是可修改、仅供审阅和影子校验的身份，不是具备写权限的
+正式发布包。现有 `v0.1.0-beta` 安装和项目属于 legacy，必须保留或显式认领。完整的
+安装、旧目录备份和回滚流程见[公开分享与平台兼容](docs/10-sharing-and-portability.md)。
 
 ### 快速使用
 
@@ -132,7 +209,7 @@ python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-githu
 
 ### 版本隔离
 
-不要让全局 Skill 安装指向持续变化的开发目录。版本隔离发布通过不可变 `release-manifest.json` 和项目内提交的 `docs/pm/AGENTDESK.lock.json` 共同确定身份；旧项目可以只读检查，写入必须精确匹配 release、commit 和 bundle 摘要。`v0.1.0-beta` 早于项目锁机制，候选协议会把它识别为 `legacy-unpinned`，只能显式迁移，不能靠重跑初始化器升级。详见[版本隔离与安全升级](docs/12-version-isolation-and-upgrades.md)。
+不要让全局 Skill 安装指向持续变化的开发目录。版本隔离发布通过不可变 `release-manifest.json` 和项目内提交的 `docs/pm/AGENTDESK.lock.json` 共同确定身份；旧项目可以只读检查，写入必须精确匹配 release、commit 和 bundle 摘要。`v0.1.0-beta` 早于项目锁机制，`v0.2.0-beta` 协议会把它识别为 `legacy-unpinned`，只能显式认领，不能靠重跑初始化器升级。详见[版本隔离与安全升级](docs/12-version-isolation-and-upgrades.md)。
 
 ### 可选咨询与圆桌研讨
 
@@ -144,9 +221,10 @@ python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-githu
 
 ### Beta 说明
 
-`v0.1.0-beta` 是早期公开旧版。本文档中的版本锁与圆桌能力在新的可验证发布产生前，
-仍属于下一版本候选。`v1.0.0` 前协议和 schema 可能变更；请固定真实存在的发布、
-审查生成 diff，并先在非关键仓库中试用。
+`v0.2.0-beta` 是当前公开 beta，`v0.1.0-beta` 保留为旧版基线。构建清单中的
+Stable 表示制品已封装并具备通过写门禁的资格，不表示 API 已脱离 beta。
+`v1.0.0` 前协议和 schema 仍可能变化；请固定 tag、审查生成 diff，并先在非关键
+仓库中试用。
 
 ## License / 许可证
 

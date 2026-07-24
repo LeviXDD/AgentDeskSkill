@@ -104,7 +104,7 @@ class ReleaseToolTests(unittest.TestCase):
 
     def test_build_activate_and_detect_tampering(self) -> None:
         source = self._create_clean_source_repository()
-        release = self.root / "releases" / "0.2.0-test.1"
+        release = self.root / "releases" / "v0.2.0-beta"
         build = run(
             sys.executable,
             str(BUILD_TOOL),
@@ -113,18 +113,18 @@ class ReleaseToolTests(unittest.TestCase):
             "--destination",
             str(release),
             "--release-id",
-            "0.2.0-test.1",
+            "v0.2.0-beta",
         )
         self.assertEqual(0, build.returncode, build.stdout)
         build_result = json.loads(build.stdout)
-        self.assertEqual("0.2.0-test.1", build_result["release_id"])
+        self.assertEqual("v0.2.0-beta", build_result["release_id"])
 
         skill_root = release / "skills" / "agentdesk"
         manifest = json.loads(
             (skill_root / "release-manifest.json").read_text(encoding="utf-8")
         )
         self.assertEqual("stable", manifest["release_status"])
-        self.assertEqual("0.2.0-test.1", manifest["skill_release"])
+        self.assertEqual("v0.2.0-beta", manifest["skill_release"])
         self.assertEqual(build_result["source_commit"], manifest["source_commit"])
         self.assertEqual(build_result["bundle_sha256"], manifest["bundle_sha256"])
         self.assertEqual(0, stat.S_IMODE(release.stat().st_mode) & 0o222)
@@ -245,7 +245,7 @@ class ReleaseToolTests(unittest.TestCase):
             "--install-link",
             str(install_link),
             "--expected-release",
-            "0.2.0-test.1",
+            "v0.2.0-beta",
             "--dry-run",
         )
         self.assertEqual(0, dry_run.returncode, dry_run.stdout)
@@ -259,7 +259,7 @@ class ReleaseToolTests(unittest.TestCase):
             "--install-link",
             str(install_link),
             "--expected-release",
-            "0.2.0-test.1",
+            "v0.2.0-beta",
         )
         self.assertEqual(0, activated.returncode, activated.stdout)
         self.assertTrue(install_link.is_symlink())

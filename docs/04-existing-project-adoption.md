@@ -73,9 +73,9 @@ python3 <skill-dir>/scripts/adopt_legacy_project.py \
 现有文件，也不会把旧聊天或时间戳伪造成历史证据。initializer 后续失败时不要删除
 lock；按输出的恢复命令用同一 bundle 续跑。
 
-该入口只适用于当前 Schema 已被候选 Reader 完整理解的首次版本认领。若需转换旧
-Schema，或项目已经存在另一版本 lock，应单独实现并审查跨版本 migration，不能使用
-此命令强行升级。
+该入口只适用于当前 Schema 已被目标 release Reader 完整理解的首次版本认领。若需
+转换旧 Schema，或项目已经存在另一版本 lock，应单独实现并审查跨版本 migration，
+不能使用此命令强行升级。
 
 完全未接入 AgentDesk 的业务仓库在审查 dry-run 后，可以运行不带 `--dry-run` 的正式初始化：
 
