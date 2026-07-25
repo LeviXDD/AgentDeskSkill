@@ -278,7 +278,7 @@ checks:
 本机 `.agentdesk/runtime/model-bindings.yaml` 使用 `agentdesk.model-bindings/v1`，初始 `bindings` 为空对象；键就是稳定的 `binding_id`。每个值必须含 `provider`、`model_id`、`tier`、`deliberation_tier`、`capabilities`、`enabled`。该文件可随环境变化且禁止提交；凭据不得进入该文件或仓库。派发前必须运行 `scripts/select_model.py`，把其 JSON 输出原样复制到 `current_dispatch.model_selection` 和 outbox 顶层 `model_selection`；不得手算或静默编辑。实际选中项的同一非秘密快照进入 report `executor_model`，成为不可变证据。
 
 ```bash
-python3 <skill-dir>/scripts/select_model.py --project <repo> --task-card-commit <40-char-sha> --role-id DEV --risk L2 --task-min-tier inherit [--required-capability long_context ...] [--degradation-approval-id APR-...]
+python3 -I <skill-dir>/scripts/select_model.py --project <repo> --task-card-commit <40-char-sha> --role-id DEV --risk L2 --task-min-tier inherit [--required-capability long_context ...] [--degradation-approval-id APR-...]
 ```
 
 真实派发必须提供完整 `--task-card-commit`，selector 会从该 commit 读取冻结策略；仅在任务卡尚未提交的配置预检中才可省略并读取当前工作树策略。

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import subprocess
 import tempfile
 import unittest
@@ -125,6 +126,73 @@ class RuntimePrivacyTests(unittest.TestCase):
                 f"{relative.as_posix()} must be excluded by an effective Git ignore rule",
                 rendered,
             )
+
+    def test_dispatch_rejects_an_unreachable_task_card_commit(self) -> None:
+        state_path = self.project / "docs/pm/state/tasks.yaml"
+        state_path.parent.mkdir(parents=True)
+        state_path.write_text(
+            json.dumps({"tasks": []}) + "\n", encoding="utf-8"
+        )
+        self._git("add", state_path.relative_to(self.project).as_posix())
+        self._git(
+            "-c",
+            "user.name=AgentDesk Test",
+            "-c",
+            "user.email=agentdesk@example.invalid",
+            "commit",
+            "-m",
+            "task-card baseline",
+        )
+        tree = self._git("rev-parse", "HEAD^{tree}").stdout.strip()
+        orphan = self._git(
+            "-c",
+            "user.name=AgentDesk Test",
+            "-c",
+            "user.email=agentdesk@example.invalid",
+            "commit-tree",
+            tree,
+        ).stdout.strip()
+
+        dispatch = {"dispatch_id": "DSP-ORPHAN"}
+        task = {
+            "task_id": "TC-999",
+            "task_card_commit": orphan,
+            "current_dispatch": dispatch,
+        }
+        state_path.write_text(
+            json.dumps({"tasks": [task]}) + "\n", encoding="utf-8"
+        )
+        self._git("add", state_path.relative_to(self.project).as_posix())
+        self._git(
+            "-c",
+            "user.name=AgentDesk Test",
+            "-c",
+            "user.email=agentdesk@example.invalid",
+            "commit",
+            "-m",
+            "dispatch task",
+        )
+
+        reporter = VALIDATOR.Reporter()
+        output = io.StringIO()
+        with redirect_stdout(output):
+            VALIDATOR._validate_dispatch_evidence(
+                self.project,
+                task,
+                None,
+                dispatch,
+                {},
+                "tasks[0]",
+                "dispatched",
+                True,
+                reporter,
+            )
+
+        self.assertGreater(reporter.errors, 0, output.getvalue())
+        self.assertIn(
+            "task_card_commit must be an ancestor of dispatch commit",
+            output.getvalue(),
+        )
 
 
 if __name__ == "__main__":

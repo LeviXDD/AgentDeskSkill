@@ -36,7 +36,7 @@ AgentDesk 不要求项目从第一天就使用它。一个已经开发完成、�
 ### 2. 运行 dry-run
 
 ```bash
-python3 <skill-dir>/scripts/init_project.py \
+python3 -I <skill-dir>/scripts/init_project.py \
   --project <repo> \
   --mode standard \
   --dry-run
@@ -52,26 +52,60 @@ python3 <skill-dir>/scripts/init_project.py \
 Stable bundle 运行零写入计划：
 
 ```bash
-python3 <skill-dir>/scripts/adopt_legacy_project.py \
+python3 -I <skill-dir>/scripts/adopt_legacy_project.py \
   --project <repo> \
   --dry-run
 ```
 
 计划会检查 Git 根、HEAD、工作树、AgentDesk markers、项目 ID、活动 attempt 和
-当前 bundle 的 commit/digest。development 源码可以输出诊断，但不能 apply。
+当前 bundle 的 commit/digest，并按顺序列出：独占创建 lock、只补缺失模板、重建
+生成视图、视图 `--check` 和 pre-commit validation。dry-run 全程零写入；
+development 源码可以输出诊断，但不能 apply。
 
 Owner 审查并明确接受“历史 Skill 身份无法证明”后，才执行：
 
 ```bash
-python3 <skill-dir>/scripts/adopt_legacy_project.py \
+python3 -I <skill-dir>/scripts/adopt_legacy_project.py \
   --project <repo> \
   --apply \
-  --acknowledge-legacy-unpinned
+  --acknowledge-legacy-unpinned \
+  --json
 ```
 
-命令会独占创建首个 lock，并调用同一 bundle 的初始化器只补缺失文件。它不会覆盖
-现有文件，也不会把旧聊天或时间戳伪造成历史证据。initializer 后续失败时不要删除
-lock；按输出的恢复命令用同一 bundle 续跑。
+命令会独占创建首个 lock，调用同一 bundle 的初始化器只补缺失模板，再重建并检查
+生成视图，最后运行 pre-commit validation。初始化器不会覆盖现有用户文件或协议
+记录，也不会把旧聊天或时间戳伪造成历史证据；`BOARD.md`、`STATUS.md` 和
+`CONSULTATIONS.md` 是从规范状态生成的视图，会在本次受控迁移中重建。每一步都会
+复核 HEAD、规范状态和 scoped Git diff；出现计划外路径就停止。整个 Python 子进程
+链使用隔离模式，不能从调用者的 `PYTHONPATH` 注入代码。
+
+apply 全部通过时只达到 `prepared`，不代表首次认领已经完成。先审查 scoped diff，
+再由用户明确授权并提交一个只包含 lock、缺失模板和重建视图的 migration commit。
+在该 commit 之前，普通 Writer 会因 lock 尚未进入 `HEAD` 而 fail closed；只有
+adopter 输出中的单条 fenced `resume-after-lock` 命令可继续准备。提交后只执行同一
+bundle 在 `post_commit_verification.commands` 中给出的命令：
+
+```bash
+python3 -I <skill-dir>/scripts/adopt_legacy_project.py \
+  --project <repo> \
+  --verify-prepared \
+  --expected-head <payload.project_head> \
+  --expected-state-sha256 <payload.state_sha256> \
+  --json
+```
+
+该 verifier 要求 `HEAD` 是以原 baseline 为唯一父提交的一次非 merge 迁移提交，
+提交路径不得超出原 allowlist，也不得漏掉必需文件；随后还会验证工作树干净、exact
+Writer、生成视图和 strict validation。只有返回 `status: durable`，认领才达到
+durable 状态。当前会话没有
+提交授权时，应停在 `prepared` 并说明待审、待提交和待严格验证的事项；不得先恢复
+派发或业务写入。
+
+首个 lock 创建后，initializer、renderer、view check 或 pre-commit validation
+任一步失败，都要保留 lock。只运行结果 payload 的单条 fenced
+`recovery.command`；它会用 `--resume-after-lock` 复核原 HEAD、状态摘要、lock、
+index 和路径 allowlist 后再续跑。不要直接执行底层 initializer/renderer，也不要
+删除、重建或手改 lock。
 
 该入口只适用于当前 Schema 已被目标 release Reader 完整理解的首次版本认领。若需
 转换旧 Schema，或项目已经存在另一版本 lock，应单独实现并审查跨版本 migration，
@@ -80,12 +114,17 @@ lock；按输出的恢复命令用同一 bundle 续跑。
 完全未接入 AgentDesk 的业务仓库在审查 dry-run 后，可以运行不带 `--dry-run` 的正式初始化：
 
 ```bash
-python3 <skill-dir>/scripts/init_project.py \
+python3 -I <skill-dir>/scripts/init_project.py \
   --project <repo> \
   --mode standard
 ```
 
 已有 Git 仓库不要加入 `--init-git`。如果这是 `legacy-unpinned` 项目，不要执行该正式初始化命令，而应先制定版本迁移。正式初始化只适用于全新接入或同一锁定发布的幂等续跑，也不等于授权创建用户可见岗位任务、派发任务或修改业务代码。
+若仓库 ignore 规则覆盖 `AGENTS.md`、`docs/pm/**` 或未来的任务卡、报告、验收、事件、outbox、讨论记录，必须先修正并提交这些规则；仅 `.agentdesk/runtime/` 应保持忽略。
+新项目首次生成的 lock 在提交前同样不能授权普通 Writer；应使用显式
+`--migration-prepare` 模式完成初始化快照检查，提交 scoped initialization commit，
+再通过 exact Writer gate。若初始化器输出 `POST_COMMIT_COMMAND`，提交后必须执行
+该命令，以绑定原 baseline、单次提交范围、clean Writer、视图和 strict validation。
 
 ### 3. 固定增量开发基线
 

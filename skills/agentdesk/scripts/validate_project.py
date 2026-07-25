@@ -225,6 +225,26 @@ class Reporter:
         )
 
 
+def _isolated_python_environment() -> dict[str, str]:
+    """Remove caller-controlled Python and Git injection from bundled tools."""
+
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_") and not key.startswith("PYTHON")
+    }
+    environment.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+    )
+    return environment
+
+
 def _validate_release_compatibility(
     project: Path, operation: str, reporter: Reporter
 ) -> Optional[dict[str, Any]]:
@@ -235,6 +255,7 @@ def _validate_release_compatibility(
         result = subprocess.run(
             [
                 sys.executable,
+                "-I",
                 str(checker),
                 "--project",
                 str(project),
@@ -247,6 +268,7 @@ def _validate_release_compatibility(
             stderr=subprocess.PIPE,
             text=True,
             timeout=30,
+            env=_isolated_python_environment(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         reporter.error(f"cannot run AgentDesk version compatibility gate: {exc}")
@@ -1108,6 +1130,32 @@ def _git_is_ancestor(project: Path, ancestor: str, descendant: str) -> Optional[
     return result.returncode == 0
 
 
+def _validate_task_card_ancestry(
+    project: Path,
+    task_card_commit: str,
+    descendant: str,
+    context: str,
+    descendant_label: str,
+    reporter: Reporter,
+) -> None:
+    ancestry = _git_is_ancestor(project, task_card_commit, descendant)
+    if ancestry is True:
+        reporter.passed(
+            f"{context}.task_card_commit is an ancestor of {descendant_label}"
+        )
+    elif ancestry is False:
+        reporter.error(
+            f"{context}.task_card_commit must be an ancestor of "
+            f"{descendant_label}; detached or unrelated frozen evidence is "
+            "not dispatch-authoritative"
+        )
+    else:
+        reporter.error(
+            f"cannot verify {context}.task_card_commit ancestry against "
+            f"{descendant_label}"
+        )
+
+
 def _matching_integration_event(
     project: Path,
     task_id: str,
@@ -1259,21 +1307,9 @@ def _validate_model_selection(
 
 
 def _selector_environment() -> dict[str, str]:
-    """Return a deterministic environment without caller-controlled Git hooks."""
+    """Return a deterministic environment without Git or Python injection."""
 
-    environment = {
-        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
-    }
-    environment.update(
-        {
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_NO_REPLACE_OBJECTS": "1",
-            "GIT_OPTIONAL_LOCKS": "0",
-            "GIT_TERMINAL_PROMPT": "0",
-        }
-    )
-    return environment
+    return _isolated_python_environment()
 
 
 def _verify_selector_snapshot(
@@ -1328,6 +1364,7 @@ def _verify_selector_snapshot(
 
     arguments = [
         sys.executable,
+        "-I",
         str(selector),
         "--project",
         str(project),
@@ -2256,6 +2293,19 @@ def _validate_dispatch_evidence(
         )
     else:
         dispatch_commit, dispatch_parents = introduction
+        task_card_commit = task.get("task_card_commit")
+        if (
+            isinstance(task_card_commit, str)
+            and SHA_RE.fullmatch(task_card_commit) is not None
+        ):
+            _validate_task_card_ancestry(
+                project,
+                task_card_commit,
+                dispatch_commit,
+                context,
+                f"dispatch commit {dispatch_commit[:12]}",
+                reporter,
+            )
         source_events = _commit_evidence_documents(
             project, dispatch_commit, events_directory, "event", reporter
         )
@@ -3941,6 +3991,21 @@ def _validate_task(
     task_card_path = task.get("task_card_path")
     task_card_frontmatter: Optional[dict[str, Any]] = None
     if (
+        state != "draft"
+        and "task_card_commit" in valid_commit_fields
+        and isinstance(task_card_commit, str)
+    ):
+        head_commit = _git_head_commit(project)
+        if head_commit:
+            _validate_task_card_ancestry(
+                project,
+                task_card_commit,
+                head_commit,
+                context,
+                "repository HEAD",
+                reporter,
+            )
+    if (
         card_file is not None
         and "task_card_commit" in valid_commit_fields
         and isinstance(task_card_commit, str)
@@ -4333,6 +4398,14 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--migration-prepare",
+        action="store_true",
+        help=(
+            "with --pre-commit, validate an approved migration snapshot under "
+            "the migrate compatibility gate"
+        ),
+    )
+    parser.add_argument(
         "--project",
         default=".",
         help="project root to validate (default: current directory)",
@@ -4371,14 +4444,25 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.allow_development_release and not args.pre_commit:
         parser.error("--allow-development-release requires --pre-commit")
+    if args.migration_prepare and not args.pre_commit:
+        parser.error("--migration-prepare requires --pre-commit")
+    if args.migration_prepare and args.allow_development_release:
+        parser.error(
+            "--migration-prepare cannot be combined with "
+            "--allow-development-release"
+        )
     reporter = validate(
         Path(args.project).expanduser(),
         require_committed=not args.pre_commit,
         allow_legacy_model_evidence=args.allow_legacy_model_evidence,
         compatibility_operation=(
-            "validate"
-            if args.allow_development_release
-            else ("write" if args.pre_commit else "validate")
+            "migrate"
+            if args.migration_prepare
+            else (
+                "validate"
+                if args.allow_development_release
+                else ("write" if args.pre_commit else "validate")
+            )
         ),
     )
     if args.allow_development_release:
@@ -4393,12 +4477,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         runtime_result = subprocess.run(
             [
                 sys.executable,
+                "-I",
                 str(runtime_script),
                 "--project",
                 str(Path(args.project).expanduser()),
                 "--check-active",
             ],
             check=False,
+            env=_isolated_python_environment(),
         )
         runtime_failed = runtime_result.returncode != 0
     return 1 if reporter.errors or runtime_failed else 0

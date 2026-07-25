@@ -77,8 +77,8 @@ Reader 通过只授权读取、诊断、生成内存视图或写入项目外临�
 运行只读判定：
 
 ```bash
-python3 <skill-dir>/scripts/check_compatibility.py --project <repo> --operation read
-python3 <skill-dir>/scripts/check_compatibility.py --project <repo> --operation validate
+python3 -I <skill-dir>/scripts/check_compatibility.py --project <repo> --operation read
+python3 -I <skill-dir>/scripts/check_compatibility.py --project <repo> --operation validate
 ```
 
 `read` 和 `validate` 都使用 manifest 的 Reader 集合。development manifest 的空 source/digest 或缺失项目锁会产生 warning 并以成功状态退出，以便继续只读盘点；这不表示项目已锁定或 Writer 兼容。自动化需要结构化结果时增加 `--json`，并检查 verdict/warning，不能只看退出码。
@@ -90,24 +90,44 @@ Writer 必须先满足 Reader 条件，再同时满足：
 1. 协议、全部 Schema 和 adapter contract 均在 manifest 的 `compatibility.writer` 集合中。
 2. `requires_exact_release: true` 时，manifest 与项目锁的 release、source commit 和 bundle SHA-256 完全相等。
 3. `requires_verified_bundle: true` 时，按 manifest 的 digest scope 重算 bundle 摘要并验证成功；`null`、缺失或摘要不符均失败。
-4. 当前项目不存在会被本次版本切换跨越的活动 attempt。
+4. 普通 `write` 要求当前 lock 已作为普通 Git blob 提交到 `HEAD`，且工作树与
+   `HEAD` 的 lock 原始字节完全相等。
+5. 当前项目不存在会被本次版本切换跨越的活动 attempt。
 
 Reader 通过而 Writer 失败时，必须明确报告“只读兼容”，不得继续渲染到仓库、派发、回调入账、验收或迁移状态。
 
 运行写入或迁移判定：
 
 ```bash
-python3 <skill-dir>/scripts/check_compatibility.py --project <repo> --operation write
-python3 <skill-dir>/scripts/check_compatibility.py --project <repo> --operation migrate
+python3 -I <skill-dir>/scripts/check_compatibility.py --project <repo> --operation write
+python3 -I <skill-dir>/scripts/check_compatibility.py --project <repo> --operation migrate
 ```
 
-`write` 和 `migrate` 都使用 Writer 集合。development manifest 的空 source/digest、缺失项目锁、版本/摘要不匹配或能力集合不足必须 fail closed 并返回非零状态。外部 `--release-manifest <path>` 只允许用于 `read` / `validate` 的候选影子检查；写入与迁移必须使用执行中 checker 同一 bundle 内的 manifest，不能让开发脚本借另一个自报 Stable 的目录取得 Writer 权限。
+`write` 和 `migrate` 都使用 Writer 集合。`migrate` 只供明确批准的初始化/迁移准备，
+可以在精确 lock 尚未提交时运行，但仍要求 Stable、exact bundle 且无活动 attempt；
+它不授权普通岗位写入、派发、回调或验收。development manifest 的空
+source/digest、缺失项目锁、版本/摘要不匹配或能力集合不足必须 fail closed 并返回
+非零状态。外部 `--release-manifest <path>` 只允许用于 `read` / `validate` 的候选
+影子检查；写入与迁移必须使用执行中 checker 同一 bundle 内的 manifest，不能让开发
+脚本借另一个自报 Stable 的目录取得 Writer 权限。
 
 ## 5. 初始化和恢复入口
 
+所有入口使用同一状态机：`plan`（零写入）→ `prepared`（未提交受限快照）→
+`committed`（已提交但尚未启用）→ `durable`（同 bundle 的提交范围/clean exact
+Writer/视图/strict 门禁通过）。任何脚本的零退出码只证明当前阶段，不得自动解释成
+后续阶段已完成。
+
 ### 全新接入
 
-初始化器先读取自身 `release-manifest.json`，验证 bundle，再执行 dry-run。只有仓库中不存在 AgentDesk markers 时，才可从同一 manifest 渲染并独占创建项目锁；锁、基础控制面和首次视图应作为同一初始化范围审查。
+初始化器先读取自身 `release-manifest.json`，验证 bundle，再执行 dry-run。只有仓库中不存在 AgentDesk markers 时，才可从同一 manifest 渲染并独占创建项目锁；锁、基础控制面和首次视图应作为同一初始化范围审查。该范围提交前只能使用
+`render_views.py --migration-prepare` 与
+`render_views.py --check`、`validate_project.py --pre-commit
+--migration-prepare`；提交后必须先通过 exact `--operation write
+--require-clean`，才能开始普通工作。
+若初始化器针对已有 baseline `HEAD` 输出 `POST_COMMIT_COMMAND`，必须执行该命令；
+它复用 `--verify-prepared` 围栏证明单次 initialization commit 的父提交、允许/必需
+路径及初始化快照约束，再组合 clean Writer、视图和 strict 验证。
 
 项目模板中的三个版本 token 必须由初始化器进行 JSON-safe 替换：
 
@@ -205,7 +225,7 @@ pinned-release 到新 release 的 Schema 转换器。`check_compatibility.py
 候选版本提供一个受限的首次认领入口：
 
 ```bash
-python3 <skill-dir>/scripts/adopt_legacy_project.py \
+python3 -I <skill-dir>/scripts/adopt_legacy_project.py \
   --project <repo> \
   --dry-run
 ```
@@ -220,18 +240,57 @@ python3 <skill-dir>/scripts/adopt_legacy_project.py \
   都已验证，且整个 bundle 已设为只读；
 - 将要调用的 initializer 与 manifest 来自同一个 bundle。
 
+dry-run 的计划必须明确列出以下顺序，并保持全程零写入：
+
+1. 独占创建首个 lock；
+2. 使用同一 bundle 的 initializer 只补缺失模板；
+3. 从规范状态重建生成视图；
+4. 执行视图 `--check`；
+5. 执行 `validate_project.py --pre-commit`。
+
 Owner 审查计划并明确批准后，才可执行：
 
 ```bash
-python3 <skill-dir>/scripts/adopt_legacy_project.py \
+python3 -I <skill-dir>/scripts/adopt_legacy_project.py \
   --project <repo> \
   --apply \
-  --acknowledge-legacy-unpinned
+  --acknowledge-legacy-unpinned \
+  --json
 ```
 
-apply 会在临写入前重新检查上述条件，使用独占创建语义写入首个 lock，然后调用同一
-bundle 的 initializer，仅补齐缺失模板，不覆盖现有文件。若 initializer 失败，lock
-会故意保留为恢复锚点；必须按命令输出使用同一 bundle 续跑，不能删除或手改 lock。
+apply 会在临写入前重新检查上述条件，使用独占创建语义写入首个 lock，调用同一
+bundle 的 initializer 仅补齐缺失模板，再依次重建生成视图、执行视图 `--check` 和
+pre-commit validation。initializer 不得覆盖已有用户文件或协议记录；`BOARD.md`、
+`STATUS.md` 和 `CONSULTATIONS.md` 是从规范来源生成的投影视图，可以在此次受控迁移中
+重建，不得把其中的旧内容当作阻止再生的用户事实。每个步骤都必须复核冻结 HEAD、
+规范状态、Git index 和明确的允许变更路径；计划外路径立即使流程 incomplete。所有
+同 bundle Python 子进程必须使用隔离模式，清除调用者的 Python/Git 注入环境。
+
+apply 全部通过只表示迁移快照处于 `prepared`，不得报告认领完成。Owner/PM 必须先
+审查 scoped diff，再明确授权并提交一个只包含首个 lock、缺失模板和重建视图的
+migration commit。普通 Writer 只信任 `HEAD` 中的 committed lock：工作树里未提交
+的精确 lock 只能由 adopter 输出的 fenced resume 命令继续准备。提交后只执行同一
+不可变 bundle 输出的 post-commit verifier：
+
+```bash
+python3 -I <skill-dir>/scripts/adopt_legacy_project.py \
+  --project <repo> \
+  --verify-prepared \
+  --expected-head <payload.project_head> \
+  --expected-state-sha256 <payload.state_sha256> \
+  --json
+```
+
+只有 verifier 证明单次迁移提交的父提交、允许/必需路径和干净工作树，并让 exact
+Writer、视图检查与 strict validation 全部通过，首次认领才达到 durable 状态。当前会话
+没有提交授权时应停在 `prepared`，明确报告待审 diff、待提交迁移和待执行的严格
+验证；在 durable 前持续冻结普通 Writer 和派发。
+
+首个 lock 一旦创建，后续 initializer、renderer、view check 或 pre-commit
+validation 任一步失败，都必须保留该 lock 作为恢复锚点并返回 incomplete。按结果
+payload 的单条 fenced `recovery.command` 使用同一 bundle 恢复；该命令通过
+`--resume-after-lock` 复核原始围栏后续跑，不得直接执行底层子脚本，也不得删除、
+重建或手改 lock。
 
 该命令只解决“已有 V2 控制面但从未固定发布身份”的首次认领。它不会转换未知旧
 Schema，不会证明旧历史使用过当前 release，也不是任意 pinned release 之间的升级
@@ -248,6 +307,12 @@ Schema，不会证明旧历史使用过当前 release，也不是任意 pinned r
 - 旧项目缺锁时保持 `legacy-unpinned`，不会被自动补锁；
 - Reader-only 检查不会产生项目内修改；
 - 活动 attempt 会阻止 lock 更新；
+- legacy adoption canary 只能在 prepared migration commit 提交后、同 bundle 的
+  exact Writer gate、strict validation 与 view check 均通过时视为 durable；
+- 普通 Writer 在 lock 缺少 committed HEAD blob 或工作树/HEAD lock bytes 不一致时
+  必须 fail closed；只有显式 `migrate` 准备路径可以处理未提交 lock；
+- adoption 子进程隔离、scoped-diff fencing、原子 lock 发布和父路径 symlink 竞态
+  回归测试通过；
 - migration dry-run、canary、strict validation 和 view check 通过；
 - 回滚演练能恢复旧锁、旧 Schema 与旧 Stable bundle；
 - Stable 与 Candidate 的安装/发现路径互不覆盖。

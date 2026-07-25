@@ -154,7 +154,7 @@
 9. 运行以下 guard；失败时把 route 保持为 `stale`/`unbound` 并停止派发：
 
    ```bash
-   python3 <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id>
+   python3 -I <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id>
    ```
 
 因此 Codex 新任务的强制工具链是：
@@ -181,7 +181,7 @@ explicit user authorization
 7. 对活动任务运行 runtime strict；失败则停止推进并进入恢复：
 
    ```bash
-   python3 <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id> --check-active
+   python3 -I <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id> --check-active
    ```
 
 ## 5. Worker 主动回调
@@ -201,8 +201,8 @@ PM 收到 callback 后按 `callback_id + dispatch_id + attempt + revision` 去�
 入账 callback receipt 后再次运行 `validate_runtime.py --project <repo> --role-id <role-id> --check-active`。本地闭环最终校验必须让仓库 strict 与 runtime strict 同时通过：
 
 ```bash
-python3 <skill-dir>/scripts/validate_runtime.py --project <repo> --check-active
-python3 <skill-dir>/scripts/validate_project.py --project <repo> --require-runtime
+python3 -I <skill-dir>/scripts/validate_runtime.py --project <repo> --check-active
+python3 -I <skill-dir>/scripts/validate_project.py --project <repo> --require-runtime
 ```
 
 第一个命令检查刚由 `read_thread` / `list_threads` 核验并落盘的 route attestation 与 receipts；它不能替代当次真实工具读取。第二个命令在仓库协议验证后强制运行时门槛。任一失败都不能宣称 Standard / Automated 闭环成立。

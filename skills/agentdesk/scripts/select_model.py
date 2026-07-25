@@ -75,9 +75,9 @@ def _parse_json_object(raw: str, label: str) -> dict[str, Any]:
     return value
 
 
-def _load_worktree_json_object(
+def _load_worktree_json_object_and_bytes(
     project: Path, relative_path: Path, label: str
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], bytes]:
     current = project
     parts = relative_path.parts
     for index, part in enumerate(parts):
@@ -111,17 +111,28 @@ def _load_worktree_json_object(
         if not stat.S_ISREG(opened_metadata.st_mode):
             raise SelectionError(f"{label} must be a regular file: {current}")
         try:
-            with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            with os.fdopen(descriptor, "rb") as handle:
                 descriptor = -1
-                raw = handle.read()
-        except UnicodeDecodeError as exc:
-            raise SelectionError(f"{label} is not valid UTF-8: {current}") from exc
+                raw_bytes = handle.read()
         except OSError as exc:
             raise SelectionError(f"cannot read {label} at {current}: {exc}") from exc
     finally:
         if descriptor >= 0:
             os.close(descriptor)
-    return _parse_json_object(raw, label)
+    try:
+        raw = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SelectionError(f"{label} is not valid UTF-8: {current}") from exc
+    return _parse_json_object(raw, label), raw_bytes
+
+
+def _load_worktree_json_object(
+    project: Path, relative_path: Path, label: str
+) -> dict[str, Any]:
+    value, _raw_bytes = _load_worktree_json_object_and_bytes(
+        project, relative_path, label
+    )
+    return value
 
 
 def _git_error_detail(stderr: bytes) -> str:
@@ -129,9 +140,13 @@ def _git_error_detail(stderr: bytes) -> str:
     return detail or "git returned no diagnostic"
 
 
-def _run_git(project: Path, arguments: Sequence[str]) -> subprocess.CompletedProcess[bytes]:
+def _isolated_python_environment() -> dict[str, str]:
+    """Remove caller-controlled Python and Git injection from bundled tools."""
+
     environment = {
-        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_") and not key.startswith("PYTHON")
     }
     environment.update(
         {
@@ -142,12 +157,16 @@ def _run_git(project: Path, arguments: Sequence[str]) -> subprocess.CompletedPro
             "GIT_TERMINAL_PROMPT": "0",
         }
     )
+    return environment
+
+
+def _run_git(project: Path, arguments: Sequence[str]) -> subprocess.CompletedProcess[bytes]:
     try:
         return subprocess.run(
             ["git", "--no-replace-objects", "-C", str(project), *arguments],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=environment,
+            env=_isolated_python_environment(),
             check=False,
         )
     except FileNotFoundError as exc:
@@ -230,6 +249,7 @@ def _require_dispatch_version_lock(project: Path, commit: str) -> None:
         compatibility = subprocess.run(
             [
                 sys.executable,
+                "-I",
                 str(checker),
                 "--project",
                 str(project),
@@ -242,30 +262,75 @@ def _require_dispatch_version_lock(project: Path, commit: str) -> None:
             stderr=subprocess.PIPE,
             text=True,
             timeout=30,
+            env=_isolated_python_environment(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise SelectionError(
             f"cannot run AgentDesk version compatibility gate: {exc}"
         ) from exc
+    try:
+        compatibility_payload = json.loads(compatibility.stdout)
+    except json.JSONDecodeError:
+        compatibility_payload = None
     if compatibility.returncode != 0:
-        try:
-            payload = json.loads(compatibility.stdout)
-        except json.JSONDecodeError:
+        if not isinstance(compatibility_payload, dict):
             detail = (
                 compatibility.stderr.strip()
                 or compatibility.stdout.strip()
                 or "no diagnostic"
             )
         else:
-            errors = payload.get("errors", []) if isinstance(payload, dict) else []
+            errors = compatibility_payload.get("errors", [])
             detail = "; ".join(
                 str(item.get("message", ""))
                 for item in errors
                 if isinstance(item, dict)
             ) or "write compatibility denied"
         raise SelectionError(f"dispatch version gate failed: {detail}")
+    if not isinstance(compatibility_payload, dict):
+        raise SelectionError(
+            "dispatch version gate returned an invalid success payload"
+        )
+    lock_summary = compatibility_payload.get("project_lock")
+    if not isinstance(lock_summary, dict):
+        raise SelectionError(
+            "dispatch version gate did not return committed lock evidence"
+        )
+    verified_head = lock_summary.get("head_commit")
+    verified_lock_blob = lock_summary.get("head_blob")
+    if (
+        not isinstance(verified_head, str)
+        or FULL_SHA_RE.fullmatch(verified_head) is None
+        or not isinstance(verified_lock_blob, str)
+        or FULL_SHA_RE.fullmatch(verified_lock_blob) is None
+    ):
+        raise SelectionError(
+            "dispatch version gate returned invalid committed lock evidence"
+        )
+    commit_check = _run_git(
+        project, ["cat-file", "-e", f"{commit}^{{commit}}"]
+    )
+    if commit_check.returncode != 0:
+        raise SelectionError(
+            f"task-card commit {commit} is not a readable Git commit: "
+            f"{_git_error_detail(commit_check.stderr)}"
+        )
+    ancestry = _run_git(
+        project,
+        ["merge-base", "--is-ancestor", commit, verified_head],
+    )
+    if ancestry.returncode == 1:
+        raise SelectionError(
+            "task-card commit must be an ancestor of the Writer-verified "
+            "project HEAD before dispatch"
+        )
+    if ancestry.returncode != 0:
+        raise SelectionError(
+            "cannot verify task-card commit ancestry against the "
+            f"Writer-verified project HEAD: {_git_error_detail(ancestry.stderr)}"
+        )
 
-    current_lock = _load_worktree_json_object(
+    _current_lock, current_lock_bytes = _load_worktree_json_object_and_bytes(
         project, PROJECT_LOCK_FILE, "project version lock"
     )
     repository_path = PROJECT_LOCK_FILE.as_posix()
@@ -293,6 +358,13 @@ def _require_dispatch_version_lock(project: Path, commit: str) -> None:
             f"task-card commit {commit} must contain regular "
             f"{repository_path}; an attempt cannot start without a frozen version lock"
         )
+    metadata, _returned_path = entries[0].split(b"\t", 1)
+    task_lock_blob = metadata.split()[2].decode("ascii", errors="strict")
+    if task_lock_blob.lower() != verified_lock_blob.lower():
+        raise SelectionError(
+            "task-card commit project lock was not the exact raw lock blob "
+            "authorized by the current Writer gate"
+        )
     blob = _run_git(project, ["show", f"{commit}:{repository_path}"])
     if blob.returncode != 0:
         raise SelectionError(
@@ -300,18 +372,37 @@ def _require_dispatch_version_lock(project: Path, commit: str) -> None:
             f"{_git_error_detail(blob.stderr)}"
         )
     try:
-        frozen_lock = _parse_json_object(
-            blob.stdout.decode("utf-8"),
-            f"project version lock at {commit}:{repository_path}",
-        )
+        frozen_lock_text = blob.stdout.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise SelectionError(
             f"project version lock at task-card commit {commit} is not UTF-8"
         ) from exc
-    if frozen_lock != current_lock:
+    _parse_json_object(
+        frozen_lock_text,
+        f"project version lock at {commit}:{repository_path}",
+    )
+    if blob.stdout != current_lock_bytes:
         raise SelectionError(
-            "current project version lock differs from task-card commit; "
+            "current project version lock bytes differ from task-card commit; "
             "an attempt must not cross AgentDesk releases"
+        )
+    _final_lock, final_lock_bytes = _load_worktree_json_object_and_bytes(
+        project, PROJECT_LOCK_FILE, "project version lock"
+    )
+    if final_lock_bytes != current_lock_bytes:
+        raise SelectionError(
+            "current project version lock changed during dispatch selection; "
+            "retry from a stable checkout"
+        )
+    final_head = _run_git(project, ["rev-parse", "--verify", "HEAD^{commit}"])
+    if (
+        final_head.returncode != 0
+        or final_head.stdout.decode("ascii", errors="ignore").strip().lower()
+        != verified_head.lower()
+    ):
+        raise SelectionError(
+            "project HEAD changed after the dispatch version gate; retry "
+            "from a stable checkout"
         )
 
 

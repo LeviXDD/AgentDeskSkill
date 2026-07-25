@@ -240,41 +240,37 @@ class VersionLockTests(unittest.TestCase):
             except OSError:
                 pass
 
-    def commit_current_lock(self, message: str = "pin project release") -> str:
-        commands = (
-            ("git", "init", "-b", "main"),
-            ("git", "add", "docs/pm/AGENTDESK.lock.json"),
-            (
+    def run_project_git(
+        self, *arguments: str
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
                 "git",
                 "-c",
                 "user.name=AgentDesk Test",
                 "-c",
                 "user.email=agentdesk@example.invalid",
-                "commit",
-                "-m",
-                message,
-            ),
-        )
-        for command in commands:
-            result = subprocess.run(
-                command,
-                cwd=self.project,
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=30,
-            )
-            self.assertEqual(0, result.returncode, result.stdout)
-        result = subprocess.run(
-            ("git", "rev-parse", "HEAD"),
-            cwd=self.project,
+                "-C",
+                str(self.project),
+                *arguments,
+            ],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             timeout=30,
         )
+
+    def commit_current_lock(self, message: str = "pin project release") -> str:
+        commands = (
+            ("init", "-b", "main"),
+            ("add", "docs/pm/AGENTDESK.lock.json"),
+            ("commit", "-m", message),
+        )
+        for command in commands:
+            result = self.run_project_git(*command)
+            self.assertEqual(0, result.returncode, result.stdout)
+        result = self.run_project_git("rev-parse", "HEAD")
         self.assertEqual(0, result.returncode, result.stdout)
         return result.stdout.strip()
 
@@ -297,11 +293,11 @@ class VersionLockTests(unittest.TestCase):
         *,
         manifest_path: Optional[Path] = None,
         seal_bundle: bool = True,
+        require_clean: bool = False,
     ) -> Tuple[subprocess.CompletedProcess[str], Dict[str, Any]]:
         if seal_bundle:
             self.seal_bundle()
-        result = subprocess.run(
-            [
+        command = [
                 sys.executable,
                 str(self.script),
                 "--project",
@@ -311,7 +307,11 @@ class VersionLockTests(unittest.TestCase):
                 "--release-manifest",
                 str(manifest_path or self.manifest_path),
                 "--json",
-            ],
+            ]
+        if require_clean:
+            command.append("--require-clean")
+        result = subprocess.run(
+            command,
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -377,8 +377,9 @@ class VersionLockTests(unittest.TestCase):
                 self.assertEqual("incompatible", payload["status"])
                 self.assert_code(payload, "errors", "legacy_unpinned")
 
-    def test_verified_exact_lock_allows_every_operation(self) -> None:
+    def test_verified_exact_committed_lock_allows_every_operation(self) -> None:
         self.write_lock(self.exact_lock())
+        self.commit_current_lock()
 
         for operation in ("read", "validate", "write", "migrate"):
             with self.subTest(operation=operation):
@@ -388,6 +389,208 @@ class VersionLockTests(unittest.TestCase):
                 self.assertEqual("compatible", payload["status"])
                 self.assertEqual([], payload["warnings"])
                 self.assertEqual([], payload["errors"])
+                if operation == "write":
+                    self.assertTrue(
+                        payload["project_lock"]["committed_at_head"]
+                    )
+                    self.assertEqual(
+                        40, len(payload["project_lock"]["head_commit"])
+                    )
+                    self.assertTrue(payload["project_lock"]["head_blob"])
+
+    def test_writer_requires_a_git_repository_but_migrate_does_not(self) -> None:
+        self.write_lock(self.exact_lock())
+
+        write_result, write_payload = self.run_check("write")
+        self.assertEqual(1, write_result.returncode, write_payload)
+        self.assert_code(
+            write_payload,
+            "errors",
+            "writer_git_repository_missing",
+        )
+
+        migrate_result, migrate_payload = self.run_check("migrate")
+        self.assertEqual(0, migrate_result.returncode, migrate_payload)
+        self.assertTrue(migrate_payload["compatible"])
+
+    def test_mutating_operations_reject_a_symlinked_git_authority(self) -> None:
+        self.write_lock(self.exact_lock())
+        self.commit_current_lock()
+        git_entry = self.project / ".git"
+        detached_authority = self.root / "detached-git-authority"
+        git_entry.rename(detached_authority)
+        git_entry.symlink_to(detached_authority, target_is_directory=True)
+
+        for operation in ("write", "migrate"):
+            with self.subTest(operation=operation):
+                result, payload = self.run_check(operation)
+                self.assertEqual(1, result.returncode, payload)
+                self.assert_code(
+                    payload, "errors", "unsafe_project_git"
+                )
+
+    def test_mutating_operations_require_the_exact_git_root(self) -> None:
+        parent = self.root / "parent-repository"
+        parent.mkdir()
+        initialized = subprocess.run(
+            ["git", "-C", str(parent), "init", "-b", "main"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(0, initialized.returncode, initialized.stdout)
+        self.project = parent / "nested-project"
+        self.project.mkdir()
+        self.write_lock(self.exact_lock())
+
+        for operation in ("write", "migrate"):
+            with self.subTest(operation=operation):
+                result, payload = self.run_check(operation)
+                self.assertEqual(1, result.returncode, payload)
+                self.assert_code(
+                    payload, "errors", "project_git_root_mismatch"
+                )
+
+    def test_writer_accepts_an_ordinary_linked_worktree_git_file(self) -> None:
+        self.write_lock(self.exact_lock())
+        self.commit_current_lock()
+        committed_state = self.run_project_git(
+            "add", "docs/pm/state/tasks.yaml"
+        )
+        self.assertEqual(
+            0, committed_state.returncode, committed_state.stdout
+        )
+        committed_state = self.run_project_git(
+            "commit", "-m", "commit canonical state"
+        )
+        self.assertEqual(
+            0, committed_state.returncode, committed_state.stdout
+        )
+        linked_project = self.root / "linked-project"
+        added = self.run_project_git(
+            "worktree", "add", "--detach", str(linked_project), "HEAD"
+        )
+        self.assertEqual(0, added.returncode, added.stdout)
+        self.project = linked_project
+        self.assertTrue((self.project / ".git").is_file())
+        self.assertFalse((self.project / ".git").is_symlink())
+
+        result, payload = self.run_check("write")
+
+        self.assertEqual(0, result.returncode, payload)
+        self.assertTrue(payload["compatible"])
+
+    def test_writer_requires_a_head_commit_but_migrate_does_not(self) -> None:
+        self.write_lock(self.exact_lock())
+        initialized = self.run_project_git("init", "-b", "main")
+        self.assertEqual(0, initialized.returncode, initialized.stdout)
+
+        write_result, write_payload = self.run_check("write")
+        self.assertEqual(1, write_result.returncode, write_payload)
+        self.assert_code(write_payload, "errors", "writer_head_missing")
+
+        migrate_result, migrate_payload = self.run_check("migrate")
+        self.assertEqual(0, migrate_result.returncode, migrate_payload)
+        self.assertTrue(migrate_payload["compatible"])
+
+    def test_writer_requires_lock_blob_in_head(self) -> None:
+        self.write_lock(self.exact_lock())
+        initialized = self.run_project_git("init", "-b", "main")
+        self.assertEqual(0, initialized.returncode, initialized.stdout)
+        readme = self.project / "README.md"
+        readme.write_text("baseline\n", encoding="utf-8")
+        added = self.run_project_git("add", "README.md")
+        self.assertEqual(0, added.returncode, added.stdout)
+        committed = self.run_project_git(
+            "commit", "-m", "baseline without project lock"
+        )
+        self.assertEqual(0, committed.returncode, committed.stdout)
+
+        result, payload = self.run_check("write")
+
+        self.assertEqual(1, result.returncode, payload)
+        self.assert_code(
+            payload, "errors", "writer_lock_missing_from_head"
+        )
+
+    def test_writer_requires_an_ordinary_lock_blob_in_head(self) -> None:
+        self.write_lock(self.exact_lock())
+        lock_path = (
+            self.project / "docs" / "pm" / "AGENTDESK.lock.json"
+        )
+        current_lock_bytes = lock_path.read_bytes()
+        lock_path.unlink()
+        lock_path.symlink_to("legacy-lock-target.json")
+        initialized = self.run_project_git("init", "-b", "main")
+        self.assertEqual(0, initialized.returncode, initialized.stdout)
+        added = self.run_project_git(
+            "add", "docs/pm/AGENTDESK.lock.json"
+        )
+        self.assertEqual(0, added.returncode, added.stdout)
+        committed = self.run_project_git(
+            "commit", "-m", "commit non-ordinary project lock"
+        )
+        self.assertEqual(0, committed.returncode, committed.stdout)
+        lock_path.unlink()
+        lock_path.write_bytes(current_lock_bytes)
+
+        result, payload = self.run_check("write")
+
+        self.assertEqual(1, result.returncode, payload)
+        self.assert_code(payload, "errors", "writer_lock_not_blob")
+
+    def test_writer_requires_head_and_worktree_lock_bytes_to_match(
+        self,
+    ) -> None:
+        self.write_lock(self.exact_lock())
+        self.commit_current_lock()
+        lock_path = (
+            self.project / "docs" / "pm" / "AGENTDESK.lock.json"
+        )
+        lock_path.write_bytes(lock_path.read_bytes() + b"\n")
+
+        result, payload = self.run_check("write")
+
+        self.assertEqual(1, result.returncode, payload)
+        self.assert_code(
+            payload, "errors", "writer_lock_bytes_mismatch"
+        )
+
+        migrate_result, migrate_payload = self.run_check("migrate")
+        self.assertEqual(0, migrate_result.returncode, migrate_payload)
+        self.assertTrue(migrate_payload["compatible"])
+
+    def test_postcommit_writer_can_require_a_clean_worktree(self) -> None:
+        self.write_lock(self.exact_lock())
+        self.commit_current_lock()
+
+        ordinary_result, ordinary_payload = self.run_check("write")
+        self.assertEqual(0, ordinary_result.returncode, ordinary_payload)
+
+        clean_result, clean_payload = self.run_check(
+            "write", require_clean=True
+        )
+        self.assertEqual(1, clean_result.returncode, clean_payload)
+        self.assert_code(
+            clean_payload, "errors", "writer_worktree_not_clean"
+        )
+
+    def test_clean_postcommit_writer_reports_clean_evidence(self) -> None:
+        self.write_lock(self.exact_lock())
+        self.commit_current_lock()
+        added = self.run_project_git("add", "docs/pm/state/tasks.yaml")
+        self.assertEqual(0, added.returncode, added.stdout)
+        committed = self.run_project_git(
+            "commit", "-m", "commit canonical state"
+        )
+        self.assertEqual(0, committed.returncode, committed.stdout)
+
+        result, payload = self.run_check("write", require_clean=True)
+
+        self.assertEqual(0, result.returncode, payload)
+        self.assertTrue(payload["project_lock"]["worktree_clean"])
 
     def test_migration_is_blocked_by_an_active_attempt(self) -> None:
         self.write_lock(self.exact_lock())
@@ -468,6 +671,14 @@ class VersionLockTests(unittest.TestCase):
         self.write_lock(old_lock)
         task_card_commit = self.commit_current_lock("commit old lock")
         self.write_lock(self.exact_lock())
+        updated = self.run_project_git(
+            "add", "docs/pm/AGENTDESK.lock.json"
+        )
+        self.assertEqual(0, updated.returncode, updated.stdout)
+        updated = self.run_project_git(
+            "commit", "-m", "commit current lock"
+        )
+        self.assertEqual(0, updated.returncode, updated.stdout)
         self.write_json(
             self.project / "docs" / "pm" / "state" / "tasks.yaml",
             {
@@ -491,6 +702,68 @@ class VersionLockTests(unittest.TestCase):
         self.assertEqual(1, result.returncode, payload)
         self.assert_code(
             payload, "errors", "active_attempt_lock_mismatch"
+        )
+
+    def test_active_writer_requires_task_card_sha_to_be_a_commit(self) -> None:
+        self.write_lock(self.exact_lock())
+        self.commit_current_lock()
+        tree = self.run_project_git("rev-parse", "HEAD^{tree}")
+        self.assertEqual(0, tree.returncode, tree.stdout)
+        self.write_json(
+            self.project / "docs" / "pm" / "state" / "tasks.yaml",
+            {
+                "schema_version": "agentdesk.tasks/v2",
+                "project_id": "test-project",
+                "tasks": [
+                    {
+                        "task_id": "TC-TREE",
+                        "state": "in_progress",
+                        "attempt": 1,
+                        "blocked_attempt_valid": None,
+                        "current_dispatch": {"dispatch_id": "DSP-TREE"},
+                        "task_card_commit": tree.stdout.strip(),
+                    }
+                ],
+            },
+        )
+
+        result, payload = self.run_check("write")
+
+        self.assertEqual(1, result.returncode, payload)
+        self.assert_code(
+            payload, "errors", "active_attempt_version_unverified"
+        )
+
+    def test_active_writer_rejects_an_unreachable_task_card_commit(self) -> None:
+        self.write_lock(self.exact_lock())
+        self.commit_current_lock()
+        tree = self.run_project_git("rev-parse", "HEAD^{tree}")
+        self.assertEqual(0, tree.returncode, tree.stdout)
+        orphan = self.run_project_git("commit-tree", tree.stdout.strip())
+        self.assertEqual(0, orphan.returncode, orphan.stdout)
+        self.write_json(
+            self.project / "docs" / "pm" / "state" / "tasks.yaml",
+            {
+                "schema_version": "agentdesk.tasks/v2",
+                "project_id": "test-project",
+                "tasks": [
+                    {
+                        "task_id": "TC-ORPHAN",
+                        "state": "in_progress",
+                        "attempt": 1,
+                        "blocked_attempt_valid": None,
+                        "current_dispatch": {"dispatch_id": "DSP-ORPHAN"},
+                        "task_card_commit": orphan.stdout.strip(),
+                    }
+                ],
+            },
+        )
+
+        result, payload = self.run_check("write")
+
+        self.assertEqual(1, result.returncode, payload)
+        self.assert_code(
+            payload, "errors", "active_attempt_commit_unreachable"
         )
 
     def test_mutating_operations_reject_ambiguous_task_state(self) -> None:
@@ -695,6 +968,7 @@ class VersionLockTests(unittest.TestCase):
             "requires_verified_bundle"
         ] = False
         self.write_lock(lock)
+        self.commit_current_lock()
 
         result, payload = self.run_check("write")
 

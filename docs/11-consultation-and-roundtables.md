@@ -248,7 +248,7 @@ docs/pm/consultations/CNNN/consultation.yaml
 公开 consultation records 更新后使用已有视图命令重新生成：
 
 ```bash
-python3 <skill-dir>/scripts/render_views.py --project <repo>
+python3 -I <skill-dir>/scripts/render_views.py --project <repo>
 ```
 
 生成器会先运行公开咨询严格校验；缺字段、非法状态、时间因果倒置或派生血缘不自洽时，它会拒绝生成 `CONSULTATIONS.md`，不会把无效 record 投影成“已关闭”。
@@ -258,13 +258,13 @@ python3 <skill-dir>/scripts/render_views.py --project <repo>
 随后校验公开生命周期和产物：
 
 ```bash
-python3 <skill-dir>/scripts/validate_consultations.py --project <repo>
+python3 -I <skill-dir>/scripts/validate_consultations.py --project <repo>
 ```
 
 如果已经创建过真实咨询会话，再执行运行时门禁：
 
 ```bash
-python3 <skill-dir>/scripts/validate_consultations.py --project <repo> --require-runtime
+python3 -I <skill-dir>/scripts/validate_consultations.py --project <repo> --require-runtime
 ```
 
 默认校验只回答“公开记录是否自洽”；`--require-runtime` 进一步核对本机保存的 Leader/席位 route、精确标题、席位创建时间与终态创建证据、prompt receipt 与 response receipt。prompt receipt 必须用 SHA-256 绑定当轮公开 brief 字节，response receipt 必须通过同席同轮的 `prompt_id + response_id` 关联并绑定公开 response 字节；时间因果要求授权早于席位创建/验证，brief 与席位验证都早于 prompt，prompt 早于主动回调，回调早于 Leader 持久化公开回答，随后才是综合与 Owner 确认，所有事件均不晚于公开记录更新时间。brief 可以预先准备，但未授权不得建席，未发送不得接纳回答。二者都不能证明宿主此刻的真实状态或 provider 当时实际传输了完全相同的 payload，最终收口前仍需通过宿主的 read/list/message 能力实时复验会话存在性、标题、发送与回调送达。

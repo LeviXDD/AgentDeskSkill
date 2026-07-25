@@ -136,7 +136,7 @@ required_model_capabilities = union(role.required_capabilities,
 
 批准 event 永不可改写，撤销只能追加 `MODEL_DEGRADATION_REVOKED` event，且同一 approval 最多一个撤销。派发前/时已撤销的批准无效；执行中撤销要停止并走恢复流程；完成后撤销只约束未来使用，不反向修改历史。dispatch、approval、revocation event 都携带整数 `lease_epoch >= 1`；同 commit 的 approval/dispatch epoch 相同，更早 approval commit 是 dispatch 的祖先且 epoch 不大于 dispatch，revocation commit 是 approval 的严格后代且其时间/epoch 不早于批准。
 
-任务卡及当时的 `ROLE-POLICIES.yaml` 必须同时存在于 `task_card_commit`；该 commit 中的策略对该 revision 冻结。后续修改岗位策略只影响新提交的 revision，不得静默改变在途派发。
+任务卡及当时的 `ROLE-POLICIES.yaml` 必须同时存在于 `task_card_commit`；该 commit 必须位于当前 HEAD 的祖先链，并在派发后成为首次 dispatch commit 的祖先，不能使用 detached/orphan 或其他不可达提交充当冻结证据。该 commit 中的策略对该 revision 冻结。后续修改岗位策略只影响新提交的 revision，不得静默改变在途派发。
 
 `.agentdesk/runtime/model-bindings.yaml` 将本机 `binding_id` 映射到 provider、model ID、tier、deliberation tier、capabilities 和 enabled 状态；它是 gitignored 的环境配置。派发前用完整 `task_card_commit` 运行确定性 `scripts/select_model.py`，确保读取该 commit 的冻结策略，再把其 JSON 原样复制到 `current_dispatch.model_selection` 和不可变 outbox；角色把同一快照写入 report 的 `executor_model`。精确 provider/model 是非秘密审计证据；移动 alias 在 provider 支持时须解析为稳定 revision，凭据、token、session/thread ID 仍只允许留在 runtime。
 

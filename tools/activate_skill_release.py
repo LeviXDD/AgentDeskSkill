@@ -219,7 +219,9 @@ def _load_and_verify_release(
 
 def _checker_environment() -> dict[str, str]:
     environment = {
-        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_") and not key.startswith("PYTHON")
     }
     environment.update(
         {
@@ -249,6 +251,7 @@ def _validate_packaged_checker(
             result = subprocess.run(
                 [
                     sys.executable,
+                    "-I",
                     str(checker),
                     "--project",
                     project,
