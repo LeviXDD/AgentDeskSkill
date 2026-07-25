@@ -11,7 +11,7 @@ AgentDesk 当前已经生成：
 它们由以下命令从 `tasks.yaml` 生成：
 
 ```bash
-python3 <skill-dir>/scripts/render_views.py --project <repo>
+python3 -I <skill-dir>/scripts/render_views.py --project <repo>
 ```
 
 这些文件是确定性快照，不是实时网页。它们不会持续观察岗位会话、Git 活动、callback receipt 或 heartbeat，也不会自行刷新。咨询投影在生成前会通过公开严格校验，但仍不代表宿主运行时会话真实存在。

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
+from unittest import mock
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +26,14 @@ LOCK_TEMPLATE = (
 MANIFEST = json.loads(
     (SKILL_ROOT / "release-manifest.json").read_text(encoding="utf-8")
 )
+INITIALIZER_SPEC = importlib.util.spec_from_file_location(
+    "agentdesk_init_project_test", INITIALIZER
+)
+if INITIALIZER_SPEC is None or INITIALIZER_SPEC.loader is None:
+    raise RuntimeError("cannot load initializer")
+INITIALIZER_MODULE = importlib.util.module_from_spec(INITIALIZER_SPEC)
+sys.modules[INITIALIZER_SPEC.name] = INITIALIZER_MODULE
+INITIALIZER_SPEC.loader.exec_module(INITIALIZER_MODULE)
 
 
 def run_initializer(
@@ -99,7 +109,9 @@ class InitializerVersionIsolationTests(unittest.TestCase):
         self.assertIn("unverified development release identity", result.stdout)
         self.assertFalse(project.exists())
 
-        allowed = run_initializer(project, "--allow-development-release")
+        allowed = run_initializer(
+            project, "--allow-development-release", "--init-git"
+        )
         self.assertEqual(0, allowed.returncode, allowed.stdout)
         self.assertEqual(
             rendered_lock(),
@@ -189,11 +201,123 @@ class InitializerVersionIsolationTests(unittest.TestCase):
         agents = project / "AGENTS.md"
         agents.write_text("user-owned\n", encoding="utf-8")
 
-        result = run_initializer(project, "--allow-development-release")
+        result = run_initializer(
+            project, "--allow-development-release", "--init-git"
+        )
 
         self.assertEqual(0, result.returncode, result.stdout)
         self.assertEqual("user-owned\n", agents.read_text(encoding="utf-8"))
         self.assertTrue((project / "docs/pm/AGENTDESK.lock.json").is_file())
+
+    def test_non_git_project_requires_explicit_init_before_any_write(self) -> None:
+        project = self.root / "non-git-existing"
+        project.mkdir()
+        readme = project / "README.md"
+        readme.write_text("business files\n", encoding="utf-8")
+        before = snapshot(project)
+
+        result = run_initializer(
+            project, "--allow-development-release"
+        )
+
+        self.assertEqual(2, result.returncode, result.stdout)
+        self.assertIn("--init-git", result.stdout)
+        self.assertIn("no files were changed", result.stdout)
+        self.assertEqual(before, snapshot(project))
+
+    def test_symlinked_git_authority_is_rejected_before_any_write(self) -> None:
+        authority = self.root / "git-authority"
+        authority.mkdir()
+        initialized = subprocess.run(
+            ["git", "-C", str(authority), "init", "-b", "main"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(0, initialized.returncode, initialized.stdout)
+        project = self.root / "symlinked-git-project"
+        project.mkdir()
+        (project / "README.md").write_text(
+            "business files\n", encoding="utf-8"
+        )
+        (project / ".git").symlink_to(
+            authority / ".git", target_is_directory=True
+        )
+        before = snapshot(project)
+
+        result = run_initializer(
+            project, "--allow-development-release"
+        )
+
+        self.assertEqual(2, result.returncode, result.stdout)
+        self.assertIn(
+            ".git authority must not be a symbolic link", result.stdout
+        )
+        self.assertEqual(before, snapshot(project))
+
+    def test_linked_worktree_git_file_remains_supported(self) -> None:
+        authority = self.root / "linked-authority"
+        authority.mkdir()
+        (authority / "README.md").write_text(
+            "baseline\n", encoding="utf-8"
+        )
+        commands = (
+            ("git", "init", "-b", "main"),
+            ("git", "add", "README.md"),
+            (
+                "git",
+                "-c",
+                "user.name=AgentDesk Test",
+                "-c",
+                "user.email=agentdesk@example.invalid",
+                "commit",
+                "-m",
+                "baseline",
+            ),
+        )
+        for command in commands:
+            result = subprocess.run(
+                list(command),
+                cwd=authority,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(0, result.returncode, result.stdout)
+        project = self.root / "linked-project"
+        linked = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(authority),
+                "worktree",
+                "add",
+                "--detach",
+                str(project),
+                "HEAD",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(0, linked.returncode, linked.stdout)
+        self.assertTrue((project / ".git").is_file())
+        self.assertFalse((project / ".git").is_symlink())
+
+        result = run_initializer(
+            project, "--allow-development-release"
+        )
+
+        self.assertEqual(0, result.returncode, result.stdout)
+        self.assertTrue(
+            (project / "docs/pm/AGENTDESK.lock.json").is_file()
+        )
 
     def test_mismatched_existing_lock_blocks_before_any_write(self) -> None:
         project = self.root / "mismatch"
@@ -215,17 +339,90 @@ class InitializerVersionIsolationTests(unittest.TestCase):
         self.assertIn("does not exactly match", result.stdout)
         self.assertEqual(before, snapshot(project))
 
-    def test_matching_lock_only_can_resume_same_bundle(self) -> None:
+    def test_development_override_cannot_resume_existing_lock(self) -> None:
         project = self.root / "interrupted"
         lock_path = project / "docs/pm/AGENTDESK.lock.json"
         lock_path.parent.mkdir(parents=True)
         lock_path.write_bytes(rendered_lock())
+        before = snapshot(project)
 
         result = run_initializer(project, "--allow-development-release")
 
-        self.assertEqual(0, result.returncode, result.stdout)
+        self.assertEqual(2, result.returncode, result.stdout)
+        self.assertIn("limited to creating a fresh disposable", result.stdout)
         self.assertEqual(rendered_lock(), lock_path.read_bytes())
-        self.assertTrue((project / "docs/pm/state/tasks.yaml").is_file())
+        self.assertEqual(before, snapshot(project))
+
+    def test_partial_authority_write_never_publishes_final_path(self) -> None:
+        destination = self.root / "atomic" / "AGENTDESK.lock.json"
+        destination.parent.mkdir()
+        real_write = INITIALIZER_MODULE.os.write
+        calls = 0
+
+        def partial_then_fail(descriptor: int, value: bytes) -> int:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return real_write(descriptor, value[:5])
+            raise OSError(28, "intentional no space left")
+
+        with mock.patch.object(
+            INITIALIZER_MODULE.os,
+            "write",
+            side_effect=partial_then_fail,
+        ):
+            with self.assertRaises(OSError):
+                INITIALIZER_MODULE._atomic_exclusive_create(
+                    destination.parent,
+                    Path("AGENTDESK.lock.json"),
+                    b'{"complete": true}\n',
+                )
+
+        self.assertFalse(destination.exists())
+        self.assertEqual([], list(destination.parent.glob(".*.tmp")))
+
+    def test_authority_parent_symlink_swap_cannot_escape_project(self) -> None:
+        project = self.root / "parent-swap"
+        pm_directory = project / "docs" / "pm"
+        pm_directory.mkdir(parents=True)
+        held_docs = project / "docs-held"
+        outside_docs = self.root / "outside-docs"
+        (outside_docs / "pm").mkdir(parents=True)
+        real_open = INITIALIZER_MODULE.os.open
+        swapped = False
+
+        def swap_before_open(
+            path: object,
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: Optional[int] = None,
+        ) -> int:
+            nonlocal swapped
+            if path == "docs" and dir_fd is not None and not swapped:
+                swapped = True
+                (project / "docs").rename(held_docs)
+                (project / "docs").symlink_to(
+                    outside_docs, target_is_directory=True
+                )
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+
+        with mock.patch.object(
+            INITIALIZER_MODULE.os, "open", side_effect=swap_before_open
+        ):
+            with self.assertRaises(OSError):
+                INITIALIZER_MODULE._atomic_exclusive_create(
+                    project,
+                    Path("docs/pm/AGENTDESK.lock.json"),
+                    b'{"complete": true}\n',
+                )
+
+        self.assertFalse(
+            (outside_docs / "pm" / "AGENTDESK.lock.json").exists()
+        )
+        self.assertFalse(
+            (held_docs / "pm" / "AGENTDESK.lock.json").exists()
+        )
 
 
 if __name__ == "__main__":

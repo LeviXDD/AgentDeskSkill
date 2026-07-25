@@ -64,7 +64,7 @@ Do not load all references by default. The repository and current task card rema
 
 - Treat `docs/pm/state/tasks.yaml` as the only authority for current **execution-task** orchestration state.
 - Treat the immutable bundle `release-manifest.json` and committed `docs/pm/AGENTDESK.lock.json` as the joint version authority. `read`/`validate` compatibility never grants Writer authority.
-- Before any project write, dispatch, callback ingestion, acceptance, recovery mutation, or project-backed consultation mutation, require `check_compatibility.py --operation write` to pass. Unknown or missing locks, unverified bundle digests, and exact-release mismatches fail closed.
+- Before any project write, dispatch, callback ingestion, acceptance, recovery mutation, or project-backed consultation mutation, require `check_compatibility.py --operation write` to pass. Unknown or missing locks, unverified bundle digests, exact-release mismatches, a missing committed lock blob, or worktree/HEAD lock-byte drift fail closed.
 - Never auto-create a lock for `legacy-unpinned` projects, never edit a lock to bypass the gate, and never let an active attempt cross a lock or Skill release change.
 - Treat a versioned task card as the only authority for that revision's work specification.
 - Let only the current logical PM lease holder modify control-plane state.
@@ -93,6 +93,14 @@ Do not load all references by default. The repository and current task card rema
 
 ## Initialize Or Explicitly Migrate A Project
 
+Use one lifecycle vocabulary for both new initialization and legacy adoption:
+`plan` is zero-write review; `prepared` is an uncommitted scoped snapshot;
+`committed` means the Owner-authorized snapshot is present in Git but is not
+yet operational; `durable` means the same immutable bundle has verified commit
+scope where available, a clean exact Writer lock, generated views, and strict
+project validity. A zero exit from an initializer or adopter never skips the
+remaining states.
+
 ### 1. Inspect Before Writing
 
 Read the repository root, `AGENTS.md`, build/test configuration, existing `docs/pm/`, current Git branch/status, and any equivalent project-management files.
@@ -112,8 +120,8 @@ Start new projects at `standard` unless their size clearly calls for `lite`. Do 
 Resolve the skill directory from this `SKILL.md`, then run:
 
 ```bash
-python3 <skill-dir>/scripts/init_project.py --project <repo> --mode standard --dry-run
-python3 <skill-dir>/scripts/init_project.py --project <repo> --mode standard
+python3 -I <skill-dir>/scripts/init_project.py --project <repo> --mode standard --dry-run
+python3 -I <skill-dir>/scripts/init_project.py --project <repo> --mode standard
 ```
 
 The initializer is not an upgrader. If existing AgentDesk markers have no `docs/pm/AGENTDESK.lock.json`, both dry-run and real initialization stop non-zero without changing files; use the explicit migration procedure in [references/versioning-and-upgrades.md](references/versioning-and-upgrades.md). If a lock exists, only the exact same bundle may resume an interrupted or idempotent initialization.
@@ -124,30 +132,74 @@ For a real `legacy-unpinned` repository, first freeze dispatch and run the
 dedicated adoption planner from the exact immutable Stable bundle:
 
 ```bash
-python3 <skill-dir>/scripts/adopt_legacy_project.py --project <repo> --dry-run
+python3 -I <skill-dir>/scripts/adopt_legacy_project.py --project <repo> --dry-run
 ```
 
 The planner is zero-write. Apply only after reviewing its stable release
 identity, clean Git baseline, project ID, marker inventory, and no-active-attempt
-result, and only with explicit Owner approval:
+result. Confirm that the plan contains, in order, exclusive lock creation,
+missing-template initialization, generated-view rendering, view `--check`, and
+pre-commit validation. Apply only with explicit Owner approval:
 
 ```bash
-python3 <skill-dir>/scripts/adopt_legacy_project.py \
+python3 -I <skill-dir>/scripts/adopt_legacy_project.py \
   --project <repo> \
   --apply \
-  --acknowledge-legacy-unpinned
+  --acknowledge-legacy-unpinned \
+  --json
 ```
 
-This command exclusively creates the first lock and invokes the same bundle's
-initializer to fill missing templates without overwriting existing files. If
-the initializer fails, preserve the new lock and follow the emitted same-bundle
-recovery command; do not delete or hand-edit the lock. This is a controlled
-first-version adoption, not proof of the historical Skill identity and not a
-general cross-version Schema migrator.
+This command exclusively creates the first lock, invokes the same bundle's
+initializer to fill missing templates without overwriting existing files,
+regenerates the derived views, checks them, and runs pre-commit validation.
+Preserve user-owned files and existing protocol records; only missing templates
+may be added, while `BOARD.md`, `STATUS.md`, and `CONSULTATIONS.md` are
+deterministic generated views and may be rebuilt from their canonical sources.
+The adopter continuously fences HEAD, canonical state, the Git index, and an
+explicit path allowlist. It launches bundled Python children in isolated mode,
+so caller-controlled `PYTHONPATH` code cannot join the migration.
+
+Treat a successful apply as `prepared`, not complete. Inspect the scoped diff,
+then let the user authorize and create one migration commit containing the
+lock, missing templates, and regenerated views. Before that commit, ordinary
+Writers must remain blocked because the lock is not yet present in `HEAD`; only
+the emitted fenced `resume-after-lock` command may continue an incomplete
+preparation. After that commit, run the exact `post_commit_verification`
+command emitted by the same immutable bundle:
+
+```bash
+python3 -I <skill-dir>/scripts/adopt_legacy_project.py \
+  --project <repo> \
+  --verify-prepared \
+  --expected-head <payload.project_head> \
+  --expected-state-sha256 <payload.state_sha256> \
+  --json
+```
+
+This verifier requires exactly one non-merge adoption commit rooted at the
+recorded baseline, rejects changed paths outside the original allowlist or
+missing required paths, requires a clean worktree, and then runs the exact
+Writer, generated-view, and strict validation gates. Call the adoption durable
+only when it returns `status: durable`. Until then, keep dispatch and business
+writers frozen. If the
+session is not authorized to commit, stop at `prepared` and report the pending
+review, commit, and post-commit verification.
+
+If any step fails after the lock is created, preserve the lock and treat the
+result as incomplete. Execute only the emitted payload's single fenced
+`recovery.command` with the same bundle; it re-enters
+`adopt_legacy_project.py --resume-after-lock` and revalidates the original
+HEAD, state digest, lock, index, and path allowlist before running child tools.
+Do not run those child tools directly, and do not delete, recreate, or hand-edit
+the lock. This is a controlled first-version
+adoption, not proof of the historical Skill identity and not a general
+cross-version Schema migrator.
 
 Add `--project-id` and `--pm-holder-id` when the defaults are ambiguous.
 
 For a user-requested new project in an empty directory, add `--init-git` to both commands. Do not create a nested repository inside an existing worktree; use the actual repository root. For an existing non-Git directory, stop and obtain confirmation before introducing version control.
+
+Versioned control-plane paths must remain trackable. If effective Git ignore rules cover `AGENTS.md`, `docs/pm/**`, or future task/report/acceptance/event/outbox/consultation evidence, stop and correct those rules before initialization or adoption; only `.agentdesk/runtime/` is intentionally ignored.
 
 Before creating the first Ready task card, ensure the repository has a real baseline commit. Do not fabricate author identity or commit unrelated existing changes merely to remove the validator warning.
 
@@ -173,7 +225,7 @@ Before the first Standard/Automated dispatch, create or rebuild gitignored `.age
 After binding or refreshing a role route, run the live pre-dispatch guard:
 
 ```bash
-python3 <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id>
+python3 -I <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id>
 ```
 
 Repository strict validation and runtime validation are separate gates; both must pass for Standard / Automated dispatch.
@@ -181,7 +233,7 @@ Repository strict validation and runtime validation are separate gates; both mus
 Before every dispatch, run the deterministic selector and use its JSON object without renaming or editing fields:
 
 ```bash
-python3 <skill-dir>/scripts/select_model.py --project <repo> --task-card-commit <40-char-sha> --role-id <role-id> --risk <L0-L4> --task-min-tier <inherit|basic|standard|advanced|expert> [--required-capability <capability> ...] [--degradation-approval-id <approval-id>]
+python3 -I <skill-dir>/scripts/select_model.py --project <repo> --task-card-commit <40-char-sha> --role-id <role-id> --risk <L0-L4> --task-min-tier <inherit|basic|standard|advanced|expert> [--required-capability <capability> ...] [--degradation-approval-id <approval-id>]
 ```
 
 Copy that exact nine-field snapshot to `current_dispatch.model_selection`, outbox `model_selection`, and later the report's `executor_model`. If `require_pm_approval` permits a degraded selection, first allocate the scoped approval and persist its structured event no later than the dispatch commit. If selection or approval fails, keep the task Ready or Blocked; never hand-compute a substitute.
@@ -193,18 +245,56 @@ The bundled selector and validator do not start a provider model or create/messa
 ### 4. Render, Preflight, Commit, And Validate
 
 ```bash
-python3 <skill-dir>/scripts/check_compatibility.py --project <repo> --operation write
-python3 <skill-dir>/scripts/render_views.py --project <repo>
-python3 <skill-dir>/scripts/validate_project.py --project <repo> --pre-commit
-python3 <skill-dir>/scripts/render_views.py --project <repo> --check
+python3 -I <skill-dir>/scripts/check_compatibility.py --project <repo> --operation write
+python3 -I <skill-dir>/scripts/render_views.py --project <repo>
+python3 -I <skill-dir>/scripts/validate_project.py --project <repo> --pre-commit
+python3 -I <skill-dir>/scripts/render_views.py --project <repo> --check
 # inspect and commit the scoped workflow snapshot
-python3 <skill-dir>/scripts/validate_project.py --project <repo>
-python3 <skill-dir>/scripts/render_views.py --project <repo> --check
+python3 -I <skill-dir>/scripts/check_compatibility.py --project <repo> --operation write --require-clean
+python3 -I <skill-dir>/scripts/validate_project.py --project <repo>
+python3 -I <skill-dir>/scripts/render_views.py --project <repo> --check
 ```
 
-When `CONSULTATION-POLICY.yaml` or consultation records are present, also run `python3 <skill-dir>/scripts/validate_consultations.py --project <repo>`. This validates the advisory record and artifacts; it does not replace live task/title/transport verification.
+For a brand-new initialization or approved adoption whose exact lock is not yet
+committed, the first three preparation commands instead use the explicit
+bootstrap/migration path:
 
-`--pre-commit` requires Writer compatibility and then performs structural checks on a proposed snapshot; it warns because it cannot prove commit atomicity while control-plane files differ from `HEAD`. After it passes, inspect the diff and commit only the scoped workflow files; never sweep unrelated existing changes into the commit. Final strict validation omits both `--pre-commit` and `--allow-legacy-model-evidence`, and proves canonical state, generated views, acceptance records, and dispatch event/outbox evidence match committed Git history. A final validation exit code does not replace the separate Writer gate. If the session is not authorized to commit an existing repository, stop with final strict validation pending rather than claiming initialization is complete.
+```bash
+python3 -I <skill-dir>/scripts/render_views.py --project <repo> --migration-prepare
+python3 -I <skill-dir>/scripts/render_views.py --project <repo> --check
+python3 -I <skill-dir>/scripts/validate_project.py \
+  --project <repo> \
+  --pre-commit \
+  --migration-prepare
+# inspect and commit only the scoped initialization or migration snapshot
+python3 -I <skill-dir>/scripts/check_compatibility.py --project <repo> --operation write --require-clean
+python3 -I <skill-dir>/scripts/render_views.py --project <repo> --check
+python3 -I <skill-dir>/scripts/validate_project.py --project <repo>
+```
+
+When `init_project.py` prints `POST_COMMIT_COMMAND` for a repository that had
+a baseline `HEAD`, execute that exact command instead of treating the three
+standalone post-commit checks as sufficient. It reuses
+`--verify-prepared` to prove the initialization is exactly one scoped commit
+from that baseline, then runs those checks. A newly created repository with no
+baseline cannot make that parent-commit proof; review its root commit as the
+whole repository and still require the clean Writer, view, and strict gates.
+
+When `CONSULTATION-POLICY.yaml` or consultation records are present, also run `python3 -I <skill-dir>/scripts/validate_consultations.py --project <repo>`. This validates the advisory record and artifacts; it does not replace live task/title/transport verification.
+
+Ordinary `--pre-commit` requires Writer compatibility. The additional
+`--migration-prepare` flag switches only an explicitly approved initialization
+or migration snapshot to the `migrate` gate; it is not valid for routine task
+writes. Both modes warn because they cannot prove commit atomicity while
+control-plane files differ from `HEAD`. After preparation passes, inspect the
+diff and commit only the scoped workflow files; never sweep unrelated existing
+changes into the commit. Final strict validation omits `--pre-commit`,
+`--migration-prepare`, and `--allow-legacy-model-evidence`, and proves canonical
+state, generated views, acceptance records, and dispatch event/outbox evidence
+match committed Git history. A final validation exit code does not replace the
+separate exact Writer gate. If the session is not authorized to commit an
+existing repository, stop with final strict validation pending rather than
+claiming initialization is complete.
 
 `render_views.py` also enforces the gate internally: write mode must use the
 manifest beside the executing immutable renderer, while `--release-manifest`
@@ -233,8 +323,8 @@ Use this workflow only for decision support. Read [the consultation protocol](re
 10. In a project-backed consultation, render and validate the advisory control plane when present:
 
    ```bash
-   python3 <skill-dir>/scripts/render_views.py --project <repo>
-   python3 <skill-dir>/scripts/validate_consultations.py --project <repo>
+   python3 -I <skill-dir>/scripts/render_views.py --project <repo>
+   python3 -I <skill-dir>/scripts/validate_consultations.py --project <repo>
    ```
 
    The default command validates the public consultation lifecycle and artifacts. Once any visible seat has actually been created, also run `validate_consultations.py --project <repo> --require-runtime`, then read/list the current provider tasks to re-verify the Leader route, distinct seat routes, exact titles, and callback delivery. Neither stored runtime evidence nor a passing validator replaces that live check.
@@ -249,7 +339,7 @@ Consultation model requirements are vendor-neutral recommendations. Do not run t
 4. Create a versioned card from [assets/task-card-template.md](assets/task-card-template.md).
 5. Validate Definition of Ready: role identity (`role_no`, `role_id`, `role_name`), frozen role policy, effective model tier/deliberation/capabilities, dependencies, immutable base, paths, checks, risk, approval gate, and context budget.
 6. Before writing `TASK_DISPATCHED`, verify the real PM task, the distinct real role task, exact expected/actual title, callback destination, dedicated worktree/host, and single-flight capacity. If a new visible task is needed and explicit user authorization is absent, stop at `Ready` and ask. For Codex, execute [the runtime adapter](references/codex-runtime-adapter.md): `list_projects` → `create_thread` → `set_thread_title` → `read_thread`/`list_threads` verification, then require `validate_runtime.py --project <repo> --role-id <role-id>` to pass. Placeholder/local labels are not routes.
-7. Allocate the attempt and IDs, run `select_model.py` with the full `task_card_commit`, and, when required, create a matching `MODEL_DEGRADATION_APPROVED` event. Copy the selector's nine fields exactly into ledger and outbox.
+7. Allocate the attempt and IDs, prove the full `task_card_commit` is an ancestor of current HEAD, run `select_model.py` with that commit, and, when required, create a matching `MODEL_DEGRADATION_APPROVED` event. Copy the selector's nine fields exactly into ledger and outbox. Strict validation must also prove the card commit is an ancestor of the first dispatch commit.
 8. Finalize the immutable outbox, hash its repository UTF-8/LF bytes into the `TASK_DISPATCHED.payload_digest`, render views, and run pre-commit structural validation. Commit the first appearance of `current_dispatch`, dispatch event, outbox, snapshot, views, and any same-commit approval together; then run strict validation.
 9. Send the immutable dispatch to the verified role `thread_id` with `send_message_to_thread`, include the runtime-only PM `source_thread_id`, and persist the provider result in `transport-receipts.yaml`. Verify visibility or obtain a matching ack before recording `InProgress`, then run `validate_runtime.py --project <repo> --role-id <role-id> --check-active`. Retries reuse the same IDs, payload, destination, and snapshot.
 10. On callback, dedupe by `callback_id`, verify its receipt and source/destination routes, then inspect the report commit, implementation commit, exact diff, source, checks, deviations, and contract changes.
@@ -286,8 +376,8 @@ A worker's `completed` report means “ready for PM review,” not Accepted.
 For read-only repository validation, run `check_compatibility.py --operation validate`, then `validate_project.py`, and inspect warnings/errors before proposing changes. `legacy-unpinned` and an unverified Candidate may remain readable but are not writable. An ordinary pass does not prove that real tasks exist, titles match, dispatch/callback messages were delivered, or receipts are genuine. For a Standard / Automated local closed-loop verdict, run both:
 
 ```bash
-python3 <skill-dir>/scripts/validate_runtime.py --project <repo> --check-active
-python3 <skill-dir>/scripts/validate_project.py --project <repo> --require-runtime
+python3 -I <skill-dir>/scripts/validate_runtime.py --project <repo> --check-active
+python3 -I <skill-dir>/scripts/validate_project.py --project <repo> --require-runtime
 ```
 
 Treat either failure as a failed closed-loop validation; do not substitute one pass for the other. See [references/codex-runtime-adapter.md](references/codex-runtime-adapter.md).

@@ -68,18 +68,18 @@ LICENSE
     python3 -m unittest discover -s tests -p 'test_*.py'
   test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
-  python3 tools/build_skill_release.py \
+  python3 -I tools/build_skill_release.py \
     --source skills/agentdesk \
     --destination "$release_dir" \
     --release-id "$release_tag"
 
-  python3 tools/activate_skill_release.py \
+  python3 -I tools/activate_skill_release.py \
     --release-directory "$release_dir" \
     --install-link "$install_link" \
     --expected-release "$release_tag" \
     --dry-run
 
-  python3 tools/activate_skill_release.py \
+  python3 -I tools/activate_skill_release.py \
     --release-directory "$release_dir" \
     --install-link "$install_link" \
     --expected-release "$release_tag"

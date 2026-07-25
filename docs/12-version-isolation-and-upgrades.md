@@ -67,25 +67,55 @@ Skill 读取项目时先比较发布清单与项目锁：
 使用专用入口而不是初始化器：
 
 ```bash
-python3 <skill-dir>/scripts/adopt_legacy_project.py \
+python3 -I <skill-dir>/scripts/adopt_legacy_project.py \
   --project <repo> \
   --dry-run
 ```
 
 dry-run 始终零写入。只有真实 Git 根、干净 HEAD、无活动 attempt、无现有 lock，
 并且执行脚本来自 commit/digest 均已验证的 Stable bundle 时，计划才可 apply。
-Owner 明确接受历史身份不可证明这一事实后执行：
+计划必须按顺序列出独占创建 lock、只补缺失模板、重建生成视图、视图 `--check` 和
+pre-commit validation。Owner 明确接受历史身份不可证明这一事实后执行：
 
 ```bash
-python3 <skill-dir>/scripts/adopt_legacy_project.py \
+python3 -I <skill-dir>/scripts/adopt_legacy_project.py \
   --project <repo> \
   --apply \
-  --acknowledge-legacy-unpinned
+  --acknowledge-legacy-unpinned \
+  --json
 ```
 
-apply 会在写入前再次检查环境，以独占方式创建首个 lock，再调用同一 bundle 的
-initializer 只补缺失模板。若 initializer 失败，lock 会保留为恢复锚点；不要删除或
-手改它，应按输出使用同一 bundle 续跑。
+apply 会在写入前再次检查环境，以独占方式创建首个 lock，调用同一 bundle 的
+initializer 只补缺失模板，再重建并检查生成视图，最后执行 pre-commit validation。
+initializer 不会覆盖已有用户文件或协议记录；`BOARD.md`、`STATUS.md` 和
+`CONSULTATIONS.md` 是确定性投影视图，会从规范状态重建。adopter 还会持续复核
+HEAD、规范状态和允许变更路径，并以隔离 Python 模式启动同 bundle 子脚本；任何
+计划外文件或调用者 `PYTHONPATH` 注入都不能被混入 prepared snapshot。
+
+apply 全部通过只表示迁移快照已经 `prepared`。Owner/PM 必须审查 scoped diff，
+再明确授权并提交一个只包含首个 lock、缺失模板和重建视图的 migration commit。
+未提交 lock 只允许 adopter 输出的 fenced resume 入口继续准备，普通 Writer 必须
+fail closed。提交后只运行同一不可变 bundle 输出的 post-commit verifier：
+
+```bash
+python3 -I <skill-dir>/scripts/adopt_legacy_project.py \
+  --project <repo> \
+  --verify-prepared \
+  --expected-head <payload.project_head> \
+  --expected-state-sha256 <payload.state_sha256> \
+  --json
+```
+
+verifier 会限定一次非 merge 迁移提交、原 baseline 父提交、允许/必需路径和干净
+工作树，再运行 exact Writer、视图检查与 strict validation。只有返回
+`status: durable`，首次认领才达到 durable 状态。
+没有提交授权时应停在 `prepared`，不得宣称迁移完成，也不得恢复派发。
+
+首个 lock 创建后，initializer、renderer、view check 或 pre-commit validation
+任一步失败，都要保留 lock 并返回 incomplete。只运行结果 payload 的单条 fenced
+`recovery.command`；该命令会以 `--resume-after-lock` 重新进入 adopter，并先复核
+原 HEAD、状态摘要、lock、index 和路径 allowlist。不要直接运行底层子脚本，也不要
+删除、重建或手改 lock。
 
 该命令不是通用升级器：它不转换未知 Schema，不证明旧历史由当前 release 创建，也
 不处理已经固定到另一 release 的项目。后一类项目仍需要专用、可重复的 Schema
@@ -94,20 +124,22 @@ migration 和独立迁移 commit。
 ## 日常兼容检查
 
 ```bash
-python3 <skill-dir>/scripts/check_compatibility.py \
+python3 -I <skill-dir>/scripts/check_compatibility.py \
   --project <repo> \
   --operation read
 
-python3 <skill-dir>/scripts/check_compatibility.py \
+python3 -I <skill-dir>/scripts/check_compatibility.py \
   --project <repo> \
   --operation validate
 
-python3 <skill-dir>/scripts/check_compatibility.py \
+python3 -I <skill-dir>/scripts/check_compatibility.py \
   --project <repo> \
   --operation write
 ```
 
-`write` 失败时，不要通过手工删锁、改版本号或复制模板绕过门禁。应继续使用项目锁定的旧发布，或进入单独的迁移流程。
+`write` 还要求当前 lock 已作为普通 blob 提交在 `HEAD`，且工作树/HEAD lock 原始
+字节相等。失败时，不要通过手工删锁、改版本号或复制模板绕过门禁。应提交已审查的
+准备快照、继续使用项目锁定的旧发布，或进入单独的迁移流程。
 
 ## 推荐升级流程
 
@@ -132,7 +164,7 @@ migrate` 只是迁移写入前的门禁，不会自行转换数据。未来某�
 维护者从干净、已提交的 Skill tree 构建发布：
 
 ```bash
-python3 tools/build_skill_release.py \
+python3 -I tools/build_skill_release.py \
   --source skills/agentdesk \
   --destination ~/.local/share/agentdesk/releases/<release-id> \
   --release-id <release-id>
@@ -143,12 +175,12 @@ python3 tools/build_skill_release.py \
 先验证原子切换，再执行：
 
 ```bash
-python3 tools/activate_skill_release.py \
+python3 -I tools/activate_skill_release.py \
   --release-directory ~/.local/share/agentdesk/releases/<release-id> \
   --expected-release <release-id> \
   --dry-run
 
-python3 tools/activate_skill_release.py \
+python3 -I tools/activate_skill_release.py \
   --release-directory ~/.local/share/agentdesk/releases/<release-id> \
   --expected-release <release-id>
 ```

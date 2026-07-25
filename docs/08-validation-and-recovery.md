@@ -7,14 +7,14 @@ AgentDesk 有两类校验：仓库协议校验和运行时校验。两者都是 
 ### 生成或检查人类视图
 
 ```bash
-python3 <skill-dir>/scripts/render_views.py --project <repo>
-python3 <skill-dir>/scripts/render_views.py --project <repo> --check
+python3 -I <skill-dir>/scripts/render_views.py --project <repo>
+python3 -I <skill-dir>/scripts/render_views.py --project <repo> --check
 ```
 
 ### 提交前结构校验
 
 ```bash
-python3 <skill-dir>/scripts/validate_project.py \
+python3 -I <skill-dir>/scripts/validate_project.py \
   --project <repo> \
   --pre-commit
 ```
@@ -24,7 +24,7 @@ python3 <skill-dir>/scripts/validate_project.py \
 ### 提交后 strict 校验
 
 ```bash
-python3 <skill-dir>/scripts/validate_project.py --project <repo>
+python3 -I <skill-dir>/scripts/validate_project.py --project <repo>
 ```
 
 它从 Git 历史验证已实现范围内的 event/outbox、账本、摘要、模型快照和 acceptance 等仓库证据。当前实现并未普遍重放每一次状态迁移的完整 event 链。
@@ -32,7 +32,7 @@ python3 <skill-dir>/scripts/validate_project.py --project <repo>
 ### 派发前 runtime 校验
 
 ```bash
-python3 <skill-dir>/scripts/validate_runtime.py \
+python3 -I <skill-dir>/scripts/validate_runtime.py \
   --project <repo> \
   --role-id <role-id>
 ```
@@ -40,7 +40,7 @@ python3 <skill-dir>/scripts/validate_runtime.py \
 ### 活动任务 runtime 校验
 
 ```bash
-python3 <skill-dir>/scripts/validate_runtime.py \
+python3 -I <skill-dir>/scripts/validate_runtime.py \
   --project <repo> \
   --check-active
 ```
@@ -48,7 +48,7 @@ python3 <skill-dir>/scripts/validate_runtime.py \
 ### 仓库校验并附加活动态 runtime 门禁
 
 ```bash
-python3 <skill-dir>/scripts/validate_project.py \
+python3 -I <skill-dir>/scripts/validate_project.py \
   --project <repo> \
   --require-runtime
 ```

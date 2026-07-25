@@ -45,18 +45,18 @@
     python3 -m unittest discover -s tests -p 'test_*.py'
   test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
-  python3 tools/build_skill_release.py \
+  python3 -I tools/build_skill_release.py \
     --source skills/agentdesk \
     --destination "$release_dir" \
     --release-id "$release_tag"
 
-  python3 tools/activate_skill_release.py \
+  python3 -I tools/activate_skill_release.py \
     --release-directory "$release_dir" \
     --install-link "$install_link" \
     --expected-release "$release_tag" \
     --dry-run
 
-  python3 tools/activate_skill_release.py \
+  python3 -I tools/activate_skill_release.py \
     --release-directory "$release_dir" \
     --install-link "$install_link" \
     --expected-release "$release_tag"
@@ -96,24 +96,66 @@
 
 ## 初始化命令
 
+新项目与旧项目认领统一使用四态：`plan` 是零写入计划；`prepared` 是尚未提交的受限
+快照；`committed` 表示用户已授权把该快照提交进 Git，但还不能开始普通写入；
+`durable` 表示同一不可变 bundle 的 exact Writer（提交后使用
+`--require-clean`）、视图检查和 strict validation 均已通过。初始化器返回 0 只说明
+本阶段成功，不得越级报告完成。
+
 Skill 实际执行的核心命令为：
 
 ```bash
-python3 <skill-dir>/scripts/init_project.py \
+python3 -I <skill-dir>/scripts/init_project.py \
   --project <repo> \
   --mode standard \
   --dry-run
 
-python3 <skill-dir>/scripts/init_project.py \
+python3 -I <skill-dir>/scripts/init_project.py \
   --project <repo> \
   --mode standard
 ```
 
 空目录且已明确授权创建 Git 仓库时，两条命令都加入 `--init-git`。已有 Git worktree 不使用该参数。
 
+正式初始化前，`AGENTS.md`、`docs/pm/**` 以及未来的任务卡、报告、验收、事件、outbox、讨论记录都必须能被 Git 跟踪；若现有 ignore 规则覆盖这些路径，应先修正规则。只有 `.agentdesk/runtime/` 按设计保持 gitignored。
+
 初始化器具有保守的幂等行为：它不会覆盖已有文件。出现 `MANUAL_MERGE` 时，应检查差异并把必要规则合并到现有文件，而不是建立第二套并行控制面。
 
 版本隔离发布会同时生成 `docs/pm/AGENTDESK.lock.json`。初始化器不是版本升级器：旧 AgentDesk 项目缺少 lock 时，dry-run 只做诊断，正式执行会在任何写入前停止。升级必须走显式迁移，不得通过重跑初始化器自动补锁。
+
+新项目刚生成的 lock 在进入 `HEAD` 之前只是准备中的版本证据，不能授权普通
+Writer。配置完项目事实后，先运行：
+
+```bash
+python3 -I <skill-dir>/scripts/render_views.py \
+  --project <repo> \
+  --migration-prepare
+python3 -I <skill-dir>/scripts/render_views.py \
+  --project <repo> \
+  --check
+python3 -I <skill-dir>/scripts/validate_project.py \
+  --project <repo> \
+  --pre-commit \
+  --migration-prepare
+```
+
+审查并提交 scoped initialization snapshot 后，再运行 exact Writer gate、视图检查
+和 strict validation。只有三者都通过，才能开始建卡或派发：
+
+```bash
+python3 -I <skill-dir>/scripts/check_compatibility.py \
+  --project <repo> \
+  --operation write \
+  --require-clean
+python3 -I <skill-dir>/scripts/render_views.py --project <repo> --check
+python3 -I <skill-dir>/scripts/validate_project.py --project <repo>
+```
+
+如果初始化器输出了 `POST_COMMIT_COMMAND`（说明初始化前已有 baseline `HEAD`），提交
+后应执行那条原样命令，而不是只把上面三条独立检查当成充分条件。它会证明初始化是
+从记录 baseline 出发的一次 scoped 非 merge 提交，并同时执行 clean exact Writer、
+视图和 strict 门禁。全新无 baseline 的仓库无法证明父提交范围，应把首次 root
+commit 作为整个仓库审查，但仍必须通过上述三门禁。
 
 ## 初始化后必须补齐的项目事实
 
@@ -185,4 +227,4 @@ R2 . QA 工程师
 - [ ] 模型选择器能找到满足硬要求的 binding；
 - [ ] repository validation 与 runtime validation 均通过。
 
-初始化完成后，日常使用不需要反复初始化。请切换到 [项目运行手册](05-operating-guide.md) 的 PM 工作流。
+初始化达到 `durable` 后，日常使用不需要反复初始化。请切换到 [项目运行手册](05-operating-guide.md) 的 PM 工作流。

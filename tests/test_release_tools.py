@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -142,6 +143,55 @@ class ReleaseToolTests(unittest.TestCase):
             "--init-git",
         )
         self.assertEqual(0, initialized.returncode, initialized.stdout)
+        uncommitted_replay = run(
+            sys.executable,
+            str(skill_root / "scripts" / "init_project.py"),
+            "--project",
+            str(project),
+            "--project-id",
+            "release-tool-test",
+            "--mode",
+            "standard",
+        )
+        self.assertEqual(
+            0, uncommitted_replay.returncode, uncommitted_replay.stdout
+        )
+        self.assertIn("STATUS prepared", uncommitted_replay.stdout)
+        self.assertIn("COMMIT_REQUIRED true", uncommitted_replay.stdout)
+        prepared_replay = run(
+            sys.executable,
+            str(skill_root / "scripts" / "init_project.py"),
+            "--project",
+            str(project),
+            "--project-id",
+            "release-tool-test",
+            "--mode",
+            "standard",
+            "--migration-prepare",
+        )
+        self.assertEqual(0, prepared_replay.returncode, prepared_replay.stdout)
+        agents_path = project / "AGENTS.md"
+        agents_path.write_text(
+            agents_path.read_text(encoding="utf-8")
+            + "\n## Project-specific instructions\n\n"
+            + "Run the repository test suite before delivery.\n",
+            encoding="utf-8",
+        )
+        for command in (
+            ("git", "add", "."),
+            (
+                "git",
+                "-c",
+                "user.name=AgentDesk Test",
+                "-c",
+                "user.email=agentdesk@example.invalid",
+                "commit",
+                "-m",
+                "initialize locked project",
+            ),
+        ):
+            result = run(*command, cwd=project)
+            self.assertEqual(0, result.returncode, result.stdout)
         compatible = run(
             sys.executable,
             str(skill_root / "scripts" / "check_compatibility.py"),
@@ -153,6 +203,20 @@ class ReleaseToolTests(unittest.TestCase):
         )
         self.assertEqual(0, compatible.returncode, compatible.stdout)
         self.assertEqual("compatible", json.loads(compatible.stdout)["status"])
+        committed_replay = run(
+            sys.executable,
+            str(skill_root / "scripts" / "init_project.py"),
+            "--project",
+            str(project),
+            "--project-id",
+            "release-tool-test",
+            "--mode",
+            "standard",
+        )
+        self.assertEqual(0, committed_replay.returncode, committed_replay.stdout)
+        self.assertIn("STATUS committed", committed_replay.stdout)
+        self.assertIn("COMMIT_REQUIRED false", committed_replay.stdout)
+        self.assertNotIn("POST_COMMIT_COMMAND ", committed_replay.stdout)
 
         bindings_path = project / ".agentdesk/runtime/model-bindings.yaml"
         bindings_path.write_text(
@@ -176,21 +240,6 @@ class ReleaseToolTests(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
-        for command in (
-            ("git", "add", "."),
-            (
-                "git",
-                "-c",
-                "user.name=AgentDesk Test",
-                "-c",
-                "user.email=agentdesk@example.invalid",
-                "commit",
-                "-m",
-                "initialize locked project",
-            ),
-        ):
-            result = run(*command, cwd=project)
-            self.assertEqual(0, result.returncode, result.stdout)
         head = run("git", "rev-parse", "HEAD", cwd=project)
         self.assertEqual(0, head.returncode, head.stdout)
         task_card_commit = head.stdout.strip()
@@ -212,7 +261,83 @@ class ReleaseToolTests(unittest.TestCase):
         self.assertEqual(0, selected.returncode, selected.stdout)
         self.assertEqual("test-standard", json.loads(selected.stdout)["model_binding_id"])
 
+        tree = run("git", "rev-parse", "HEAD^{tree}", cwd=project)
+        self.assertEqual(0, tree.returncode, tree.stdout)
+        orphan = run(
+            "git",
+            "-c",
+            "user.name=AgentDesk Test",
+            "-c",
+            "user.email=agentdesk@example.invalid",
+            "commit-tree",
+            tree.stdout.strip(),
+            cwd=project,
+        )
+        self.assertEqual(0, orphan.returncode, orphan.stdout)
+        unreachable_selection = run(
+            sys.executable,
+            str(skill_root / "scripts" / "select_model.py"),
+            "--project",
+            str(project),
+            "--task-card-commit",
+            orphan.stdout.strip(),
+            "--role-id",
+            "DEV",
+            "--risk",
+            "L0",
+            "--task-min-tier",
+            "inherit",
+        )
+        self.assertEqual(
+            1, unreachable_selection.returncode, unreachable_selection.stdout
+        )
+        self.assertIn(
+            "must be an ancestor", unreachable_selection.stdout
+        )
+
         lock_path = project / "docs/pm/AGENTDESK.lock.json"
+        same_lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        lock_path.write_text(
+            json.dumps(
+                same_lock,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        reformatted = run("git", "add", lock_path.relative_to(project).as_posix(), cwd=project)
+        self.assertEqual(0, reformatted.returncode, reformatted.stdout)
+        reformatted = run(
+            "git",
+            "-c",
+            "user.name=AgentDesk Test",
+            "-c",
+            "user.email=agentdesk@example.invalid",
+            "commit",
+            "-m",
+            "reformat exact project lock",
+            cwd=project,
+        )
+        self.assertEqual(0, reformatted.returncode, reformatted.stdout)
+        raw_mismatch = run(
+            sys.executable,
+            str(skill_root / "scripts" / "select_model.py"),
+            "--project",
+            str(project),
+            "--task-card-commit",
+            task_card_commit,
+            "--role-id",
+            "DEV",
+            "--risk",
+            "L0",
+            "--task-min-tier",
+            "inherit",
+        )
+        self.assertEqual(1, raw_mismatch.returncode, raw_mismatch.stdout)
+        self.assertIn("exact raw lock blob", raw_mismatch.stdout)
+
         changed_lock = json.loads(lock_path.read_text(encoding="utf-8"))
         changed_lock["skill"]["release"] = "crossed-release"
         lock_path.write_text(
@@ -282,6 +407,428 @@ class ReleaseToolTests(unittest.TestCase):
         )
         self.assertEqual(1, rejected.returncode, rejected.stdout)
         self.assertRegex(rejected.stdout, r"(digest mismatch|writable)")
+
+    def test_stable_lock_only_initialization_resume_is_narrow(self) -> None:
+        source = self._create_clean_source_repository()
+        release = self.root / "releases" / "lock-only-resume"
+        build = run(
+            sys.executable,
+            str(BUILD_TOOL),
+            "--source",
+            str(source),
+            "--destination",
+            str(release),
+            "--release-id",
+            "lock-only-resume",
+        )
+        self.assertEqual(0, build.returncode, build.stdout)
+        skill_root = release / "skills" / "agentdesk"
+
+        ignored_project = self.root / "ignored-control-plane-project"
+        ignored_project.mkdir()
+        created = run("git", "init", "-b", "main", cwd=ignored_project)
+        self.assertEqual(0, created.returncode, created.stdout)
+        (ignored_project / ".gitignore").write_text(
+            "AGENTS.md\ndocs/pm/\n.agentdesk/runtime/\n",
+            encoding="utf-8",
+        )
+        (ignored_project / "README.md").write_text(
+            "business baseline\n", encoding="utf-8"
+        )
+        for command in (
+            ("git", "add", ".gitignore", "README.md"),
+            (
+                "git",
+                "-c",
+                "user.name=AgentDesk Test",
+                "-c",
+                "user.email=agentdesk@example.invalid",
+                "commit",
+                "-m",
+                "ignored business baseline",
+            ),
+        ):
+            result = run(*command, cwd=ignored_project)
+            self.assertEqual(0, result.returncode, result.stdout)
+        ignored_initialization = run(
+            sys.executable,
+            str(skill_root / "scripts" / "init_project.py"),
+            "--project",
+            str(ignored_project),
+            "--project-id",
+            "ignored-control-plane-project",
+            "--mode",
+            "standard",
+        )
+        self.assertEqual(
+            2, ignored_initialization.returncode, ignored_initialization.stdout
+        )
+        self.assertIn(
+            "effective Git ignore rules exclude versioned AgentDesk "
+            "control-plane paths",
+            ignored_initialization.stdout,
+        )
+        self.assertFalse(
+            (ignored_project / "docs/pm/AGENTDESK.lock.json").exists()
+        )
+        self.assertFalse((ignored_project / "AGENTS.md").exists())
+        status = run(
+            "git",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            cwd=ignored_project,
+        )
+        self.assertEqual(0, status.returncode, status.stdout)
+        self.assertEqual("", status.stdout)
+
+        verifier_project = self.root / "ignored-after-prepare-project"
+        verifier_project.mkdir()
+        created = run("git", "init", "-b", "main", cwd=verifier_project)
+        self.assertEqual(0, created.returncode, created.stdout)
+        (verifier_project / "README.md").write_text(
+            "business baseline\n", encoding="utf-8"
+        )
+        for command in (
+            ("git", "add", "README.md"),
+            (
+                "git",
+                "-c",
+                "user.name=AgentDesk Test",
+                "-c",
+                "user.email=agentdesk@example.invalid",
+                "commit",
+                "-m",
+                "business baseline",
+            ),
+        ):
+            result = run(*command, cwd=verifier_project)
+            self.assertEqual(0, result.returncode, result.stdout)
+        prepared = run(
+            sys.executable,
+            str(skill_root / "scripts" / "init_project.py"),
+            "--project",
+            str(verifier_project),
+            "--project-id",
+            "ignored-after-prepare-project",
+            "--mode",
+            "standard",
+        )
+        self.assertEqual(0, prepared.returncode, prepared.stdout)
+        postcommit_line = next(
+            line
+            for line in prepared.stdout.splitlines()
+            if line.startswith("POST_COMMIT_COMMAND ")
+        )
+        verifier_command = shlex.split(
+            postcommit_line.removeprefix("POST_COMMIT_COMMAND ")
+        )
+        gitignore = verifier_project / ".gitignore"
+        gitignore.write_text(
+            gitignore.read_text(encoding="utf-8")
+            + "AGENTS.md\ndocs/pm/\n",
+            encoding="utf-8",
+        )
+        for command in (
+            (
+                "git",
+                "add",
+                "--force",
+                ".gitignore",
+                "AGENTS.md",
+                "docs/pm",
+            ),
+            (
+                "git",
+                "-c",
+                "user.name=AgentDesk Test",
+                "-c",
+                "user.email=agentdesk@example.invalid",
+                "commit",
+                "-m",
+                "commit ignored control plane",
+            ),
+        ):
+            result = run(*command, cwd=verifier_project)
+            self.assertEqual(0, result.returncode, result.stdout)
+        rejected_verification = run(*verifier_command)
+        self.assertNotEqual(
+            0,
+            rejected_verification.returncode,
+            rejected_verification.stdout,
+        )
+        self.assertIn(
+            "public_control_plane_ignored",
+            rejected_verification.stdout,
+        )
+
+        scratch = self.root / "scratch-initialization"
+        initialized = run(
+            sys.executable,
+            str(skill_root / "scripts" / "init_project.py"),
+            "--project",
+            str(scratch),
+            "--project-id",
+            "lock-only-project",
+            "--mode",
+            "standard",
+            "--init-git",
+        )
+        self.assertEqual(0, initialized.returncode, initialized.stdout)
+
+        project = self.root / "lock-only-project"
+        project.mkdir()
+        created = run("git", "init", "-b", "main", cwd=project)
+        self.assertEqual(0, created.returncode, created.stdout)
+        (project / "README.md").write_text("baseline\n", encoding="utf-8")
+        for command in (
+            ("git", "add", "README.md"),
+            (
+                "git",
+                "-c",
+                "user.name=AgentDesk Test",
+                "-c",
+                "user.email=agentdesk@example.invalid",
+                "commit",
+                "-m",
+                "business baseline",
+            ),
+        ):
+            result = run(*command, cwd=project)
+            self.assertEqual(0, result.returncode, result.stdout)
+        lock_path = project / "docs/pm/AGENTDESK.lock.json"
+        lock_path.parent.mkdir(parents=True)
+        lock_path.write_bytes(
+            (scratch / "docs/pm/AGENTDESK.lock.json").read_bytes()
+        )
+        self.assertFalse((project / "docs/pm/state/tasks.yaml").exists())
+
+        resumed = run(
+            sys.executable,
+            str(skill_root / "scripts" / "init_project.py"),
+            "--project",
+            str(project),
+            "--project-id",
+            "lock-only-project",
+            "--mode",
+            "standard",
+        )
+        self.assertEqual(0, resumed.returncode, resumed.stdout)
+        self.assertTrue((project / "docs/pm/state/tasks.yaml").is_file())
+        postcommit_line = next(
+            line
+            for line in resumed.stdout.splitlines()
+            if line.startswith("POST_COMMIT_COMMAND ")
+        )
+        postcommit_command = shlex.split(
+            postcommit_line.removeprefix("POST_COMMIT_COMMAND ")
+        )
+
+        ordinary_replay = run(
+            sys.executable,
+            str(skill_root / "scripts" / "init_project.py"),
+            "--project",
+            str(project),
+            "--project-id",
+            "lock-only-project",
+            "--mode",
+            "standard",
+        )
+        self.assertEqual(
+            0, ordinary_replay.returncode, ordinary_replay.stdout
+        )
+        prepared_replay = run(
+            sys.executable,
+            str(skill_root / "scripts" / "init_project.py"),
+            "--project",
+            str(project),
+            "--project-id",
+            "lock-only-project",
+            "--mode",
+            "standard",
+            "--migration-prepare",
+        )
+        self.assertEqual(0, prepared_replay.returncode, prepared_replay.stdout)
+        for command in (
+            ("git", "add", "-A"),
+            (
+                "git",
+                "-c",
+                "user.name=AgentDesk Test",
+                "-c",
+                "user.email=agentdesk@example.invalid",
+                "commit",
+                "-m",
+                "initialize AgentDesk control plane",
+            ),
+        ):
+            result = run(*command, cwd=project)
+            self.assertEqual(0, result.returncode, result.stdout)
+        verified = run(*postcommit_command)
+        self.assertEqual(0, verified.returncode, verified.stdout)
+        self.assertEqual("durable", json.loads(verified.stdout)["status"])
+
+        legacy = self.root / "legacy-uncommitted-lock"
+        legacy.mkdir()
+        created = run("git", "init", "-b", "main", cwd=legacy)
+        self.assertEqual(0, created.returncode, created.stdout)
+        legacy_state = legacy / "docs/pm/state/tasks.yaml"
+        legacy_state.parent.mkdir(parents=True)
+        legacy_state.write_bytes(
+            (scratch / "docs/pm/state/tasks.yaml").read_bytes()
+        )
+        for command in (
+            ("git", "add", "docs/pm/state/tasks.yaml"),
+            (
+                "git",
+                "-c",
+                "user.name=AgentDesk Test",
+                "-c",
+                "user.email=agentdesk@example.invalid",
+                "commit",
+                "-m",
+                "legacy control plane baseline",
+            ),
+        ):
+            result = run(*command, cwd=legacy)
+            self.assertEqual(0, result.returncode, result.stdout)
+        legacy_lock = legacy / "docs/pm/AGENTDESK.lock.json"
+        legacy_lock.write_bytes(
+            (scratch / "docs/pm/AGENTDESK.lock.json").read_bytes()
+        )
+        blocked = run(
+            sys.executable,
+            str(skill_root / "scripts" / "init_project.py"),
+            "--project",
+            str(legacy),
+            "--project-id",
+            "lock-only-project",
+            "--mode",
+            "standard",
+        )
+        self.assertEqual(2, blocked.returncode, blocked.stdout)
+        self.assertIn("lock", blocked.stdout.lower())
+        allowed = run(
+            sys.executable,
+            str(skill_root / "scripts" / "init_project.py"),
+            "--project",
+            str(legacy),
+            "--project-id",
+            "lock-only-project",
+            "--mode",
+            "standard",
+            "--migration-prepare",
+        )
+        self.assertEqual(0, allowed.returncode, allowed.stdout)
+
+        marker_project = self.root / "marker-only-spoof"
+        marker_project.mkdir()
+        created = run("git", "init", "-b", "main", cwd=marker_project)
+        self.assertEqual(0, created.returncode, created.stdout)
+        marker = marker_project / "docs/pm/BOARD.md"
+        marker.parent.mkdir(parents=True)
+        marker.write_text("legacy board\n", encoding="utf-8")
+        for command in (
+            ("git", "add", "docs/pm/BOARD.md"),
+            (
+                "git",
+                "-c",
+                "user.name=AgentDesk Test",
+                "-c",
+                "user.email=agentdesk@example.invalid",
+                "commit",
+                "-m",
+                "legacy marker baseline",
+            ),
+        ):
+            result = run(*command, cwd=marker_project)
+            self.assertEqual(0, result.returncode, result.stdout)
+        marker_lock = marker_project / "docs/pm/AGENTDESK.lock.json"
+        marker_lock.write_bytes(
+            (scratch / "docs/pm/AGENTDESK.lock.json").read_bytes()
+        )
+        spoofed = run(
+            sys.executable,
+            str(skill_root / "scripts" / "init_project.py"),
+            "--project",
+            str(marker_project),
+            "--project-id",
+            "lock-only-project",
+            "--mode",
+            "standard",
+        )
+        self.assertEqual(2, spoofed.returncode, spoofed.stdout)
+        self.assertIn("explicit legacy adoption", spoofed.stdout)
+        self.assertFalse(
+            (marker_project / "docs/pm/state/tasks.yaml").exists()
+        )
+
+    def test_release_tools_isolate_packaged_checker_from_pythonpath(self) -> None:
+        source = self._create_clean_source_repository()
+        injection = self.root / "python-injection"
+        injection.mkdir()
+        marker = self.root / "sitecustomize-executed"
+        (injection / "sitecustomize.py").write_text(
+            "\n".join(
+                (
+                    "import os",
+                    "from pathlib import Path",
+                    "target = os.environ.get('AGENTDESK_INJECTION_MARKER')",
+                    "if target:",
+                    "    Path(target).write_text('executed\\n', encoding='utf-8')",
+                    "",
+                )
+            ),
+            encoding="utf-8",
+        )
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(injection)
+        environment["AGENTDESK_INJECTION_MARKER"] = str(marker)
+        release = self.root / "releases" / "isolated-checker"
+        build = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                str(BUILD_TOOL),
+                "--source",
+                str(source),
+                "--destination",
+                str(release),
+                "--release-id",
+                "isolated-checker",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=60,
+            env=environment,
+        )
+        self.assertEqual(0, build.returncode, build.stdout)
+        self.assertFalse(marker.exists())
+
+        activated = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                str(ACTIVATE_TOOL),
+                "--release-directory",
+                str(release),
+                "--install-link",
+                str(self.root / "install" / "agentdesk"),
+                "--expected-release",
+                "isolated-checker",
+                "--dry-run",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=60,
+            env=environment,
+        )
+        self.assertEqual(0, activated.returncode, activated.stdout)
+        self.assertFalse(marker.exists())
 
     def test_activation_detects_release_manifest_metadata_tampering(self) -> None:
         source = self._create_clean_source_repository()

@@ -48,7 +48,7 @@ Consultation seats may have vendor-neutral `minimum_tier`, `deliberation_tier`, 
 2. Read `state/tasks.yaml`, `ROLES.md`, relevant task cards, decisions, reports, and acceptance.
 3. Bind the current PM/Leader session in `.agentdesk/runtime/routes.yaml`: populate the real local route, make its visible title equal `PM . 项目经理`, set `actual_title` to the observed title, and mark it verified only after a successful platform lookup.
 4. Reconcile Active worker routes against the platform. A cached thread ID or a pre-existing worktree is insufficient; re-verify reachability, identity, title, and worktree ownership before dispatch.
-5. Run repository strict validation. Before a role dispatch, also run `python3 <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id>`; repository validation cannot substitute for this runtime gate.
+5. Run repository strict validation. Before a role dispatch, also run `python3 -I <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id>`; repository validation cannot substitute for this runtime gate.
 
 ## Bind A Role Session
 
@@ -60,7 +60,7 @@ Perform this after user confirmation and before the role's first dispatch:
 4. Read the session back through the host and verify that it exists, is addressable, is not archived, has the expected title, and is attached to the intended worktree.
 5. Add or update the role entry in gitignored `.agentdesk/runtime/routes.yaml` using schema `agentdesk.routes/v2`. Store `role_no`, `role_name`, `expected_title`, transport, host/thread binding, observed `actual_title`, worktree, `status: verified`, and `verified_at`.
 6. Assert that all non-null `thread_id` values are unique and that the worker route differs from the PM route. Placeholder IDs, inferred IDs, `status: unbound`, a title mismatch, or a worktree without a real thread fails this gate.
-7. Run `python3 <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id>`. Do not issue a card until it passes after the live platform lookup.
+7. Run `python3 -I <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id>`. Do not issue a card until it passes after the live platform lookup.
 
 Do not write any local route field to `ROLES.md`, the task card, tasks ledger, event, outbox, report, acceptance, or Git history.
 
@@ -78,7 +78,7 @@ Do not write any local route field to `ROLES.md`, the task card, tasks ledger, e
 10. Resolve `destination_role_id` through the verified runtime route and deliver the self-contained outbox message to that exact independent session. The message must state the expected role identity/title, full frozen card, worktree/branch/commit facts, logical callback destination `PM`, and the prohibition on changing control-plane state.
 11. Record the provider's result under the original `message_id` in `.agentdesk/runtime/transport-receipts.yaml.dispatch_receipts`. A successful entry must prove which dispatch and logical role were delivered, the actual runtime destination, the provider status/receipt, and delivery time. Never copy that receipt into Git.
 12. Require a role acknowledgement that echoes `task_id + revision + attempt + dispatch_id` from the bound worker session. Only then move to `InProgress`. A transport receipt proves delivery; the acknowledgement proves the role accepted the correct card.
-13. Run `python3 <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id> --check-active`. A failure freezes further lifecycle progress until reconciled.
+13. Run `python3 -I <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id> --check-active`. A failure freezes further lifecycle progress until reconciled.
 
 If delivery fails or no receipt/ack arrives, keep the durable state at `Dispatched`, replay the same immutable outbox with the same IDs, and surface the failure. Do not create a new attempt, mark `InProgress`, or run the card in the PM session.
 
@@ -90,7 +90,7 @@ If delivery fails or no receipt/ack arrives, keep the durable state at `Dispatch
 4. Record the provider result under that `callback_id` in `.agentdesk/runtime/transport-receipts.yaml.callback_receipts`. The receipt is runtime-only and must identify the callback, dispatch, logical source/destination, actual local route, provider status/receipt, and delivery time.
 5. The worker must not describe orchestration as complete until the callback has a successful receipt. If sending is unavailable, report the transport failure in its visible final response and leave it retryable with the same callback ID.
 6. PM validates callback identity against the current dispatch and receipt, then moves the task to review. A report found in Git is durable recovery evidence, not proof that callback delivery occurred.
-7. After recording the received callback, run `python3 <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id> --check-active`. Before claiming the local loop closed, require `python3 <skill-dir>/scripts/validate_project.py --project <repo> --require-runtime` as well.
+7. After recording the received callback, run `python3 -I <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id> --check-active`. Before claiming the local loop closed, require `python3 -I <skill-dir>/scripts/validate_project.py --project <repo> --require-runtime` as well.
 
 ## Heartbeat Gate
 

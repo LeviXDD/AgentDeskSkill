@@ -362,7 +362,7 @@ PM 按 base commit 审查 diff、源码、检查结果和范围并写 acceptance
 4. 依赖必须引用存在的任务、不得自依赖、不得形成环。
 5. `ready` / `dispatched` 必须满足全部依赖；默认要求 `integrated`。使用 `accepted` 例外时必须有 `required_commit`，且它等于前置任务当前 accepted commit，并且是本卡 `base_commit` 的祖先；校验证据必须进入状态 event 的 `guard_results`。
 6. `unlocks` 是 `depends_on` 的反向派生值，禁止存入任务记录。
-7. `task_card_commit`、`base_commit` 和四类结果 commit 必须是完整 Git SHA；同一 revision 的任务卡与基线不可变。
+7. `task_card_commit`、`base_commit` 和四类结果 commit 必须是完整 Git SHA；`task_card_commit` 必须是当前 HEAD 以及首次 dispatch commit 的祖先，detached/orphan 或其他不可达提交不能作为派发证据；同一 revision 的任务卡与基线不可变。
 8. `blocked_paths` 优先于 `allowed_paths`；除当前派发的精确 `report_path` 例外外，实际 diff 不得命中 blocked paths。
 9. `conflict_surfaces` 相交的活动任务默认不得并行，除非 PM 在决策记录中批准。
 10. `required_checks` 只能引用 `CHECKS.yaml` 中受控的 `check_id`，不得自动执行任务文本中的任意 shell 字符串。

@@ -62,6 +62,26 @@ class RenderError(Exception):
     """A user-actionable state or filesystem error."""
 
 
+def _isolated_python_environment() -> dict[str, str]:
+    """Remove caller-controlled Python and Git injection from bundled tools."""
+
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_") and not key.startswith("PYTHON")
+    }
+    environment.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+    )
+    return environment
+
+
 def _require_version_compatibility(
     project: Path,
     *,
@@ -73,6 +93,7 @@ def _require_version_compatibility(
     checker = Path(__file__).resolve().with_name("check_compatibility.py")
     command = [
         sys.executable,
+        "-I",
         str(checker),
         "--project",
         str(project),
@@ -90,6 +111,7 @@ def _require_version_compatibility(
             stderr=subprocess.PIPE,
             text=True,
             timeout=30,
+            env=_isolated_python_environment(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RenderError(
@@ -811,6 +833,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="compare generated views without writing; exit 1 on drift",
     )
     parser.add_argument(
+        "--migration-prepare",
+        action="store_true",
+        help=(
+            "write generated views under the explicit migrate compatibility "
+            "gate while preparing an approved migration"
+        ),
+    )
+    parser.add_argument(
         "--release-manifest",
         help=(
             "release manifest for an explicit shadow/read check or test bundle "
@@ -821,7 +851,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.migration_prepare and args.check:
+        parser.error("--migration-prepare cannot be combined with --check")
+    if args.migration_prepare and args.release_manifest:
+        parser.error(
+            "--migration-prepare cannot be combined with --release-manifest"
+        )
     project = Path(args.project).expanduser().resolve()
     try:
         if not project.is_dir():
@@ -833,7 +870,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             )
         _require_version_compatibility(
             project,
-            operation="validate" if args.check else "write",
+            operation=(
+                "validate"
+                if args.check
+                else ("migrate" if args.migration_prepare else "write")
+            ),
             release_manifest=(
                 Path(args.release_manifest).expanduser().resolve()
                 if args.release_manifest

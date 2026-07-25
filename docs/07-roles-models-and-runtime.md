@@ -110,7 +110,7 @@ preferred_tier = max(
 派发前运行：
 
 ```bash
-python3 <skill-dir>/scripts/select_model.py \
+python3 -I <skill-dir>/scripts/select_model.py \
   --project <repo> \
   --task-card-commit <40-char-sha> \
   --role-id <role-id> \

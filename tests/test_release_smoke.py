@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -23,10 +24,15 @@ SCRIPT_NAMES = (
 )
 
 
-def run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run(
+    *args: str,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         list(args),
         cwd=cwd,
+        env=env,
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -223,6 +229,133 @@ class ReleaseSmokeTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, f"{name}:\n{result.stdout}")
             self.assertIn("usage:", result.stdout.lower())
 
+        render_help = run(
+            sys.executable,
+            str(SKILL_ROOT / "scripts" / "render_views.py"),
+            "--help",
+        )
+        validator_help = run(
+            sys.executable,
+            str(SKILL_ROOT / "scripts" / "validate_project.py"),
+            "--help",
+        )
+        self.assertIn("--migration-prepare", render_help.stdout)
+        self.assertIn("--migration-prepare", validator_help.stdout)
+
+    def test_migration_prepare_argument_guards(self) -> None:
+        renderer = str(SKILL_ROOT / "scripts" / "render_views.py")
+        validator = str(SKILL_ROOT / "scripts" / "validate_project.py")
+        manifest = str(SKILL_ROOT / "release-manifest.json")
+
+        render_check = run(
+            sys.executable,
+            renderer,
+            "--migration-prepare",
+            "--check",
+        )
+        self.assertEqual(2, render_check.returncode, render_check.stdout)
+        self.assertIn(
+            "--migration-prepare cannot be combined with --check",
+            render_check.stdout,
+        )
+
+        render_manifest = run(
+            sys.executable,
+            renderer,
+            "--migration-prepare",
+            "--release-manifest",
+            manifest,
+        )
+        self.assertEqual(2, render_manifest.returncode, render_manifest.stdout)
+        self.assertIn(
+            "--migration-prepare cannot be combined with --release-manifest",
+            render_manifest.stdout,
+        )
+
+        validate_without_precommit = run(
+            sys.executable,
+            validator,
+            "--migration-prepare",
+        )
+        self.assertEqual(
+            2,
+            validate_without_precommit.returncode,
+            validate_without_precommit.stdout,
+        )
+        self.assertIn(
+            "--migration-prepare requires --pre-commit",
+            validate_without_precommit.stdout,
+        )
+
+    def test_bundled_python_children_ignore_pythonpath_sitecustomize(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="agentdesk-release-python-isolation-"
+        ) as temp:
+            root = Path(temp)
+            project = root / "project"
+            project.mkdir()
+            injection_root = root / "pythonpath-injection"
+            injection_root.mkdir()
+            marker = root / "sitecustomize-executed"
+            (injection_root / "sitecustomize.py").write_text(
+                "\n".join(
+                    (
+                        "import os",
+                        "from pathlib import Path",
+                        "marker = os.environ.get('AGENTDESK_TEST_INJECTION_MARKER')",
+                        "if marker:",
+                        "    Path(marker).write_text('executed\\n', encoding='utf-8')",
+                        "",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            environment = dict(os.environ)
+            environment["PYTHONPATH"] = str(injection_root)
+            environment["AGENTDESK_TEST_INJECTION_MARKER"] = str(marker)
+
+            cases = (
+                (
+                    "render_views.py",
+                    ("--project", str(project), "--check"),
+                    "version compatibility",
+                ),
+                (
+                    "validate_project.py",
+                    ("--project", str(project), "--require-runtime"),
+                    "version compatibility",
+                ),
+                (
+                    "select_model.py",
+                    (
+                        "--project",
+                        str(project),
+                        "--task-card-commit",
+                        "0" * 40,
+                        "--role-id",
+                        "role-test",
+                        "--risk",
+                        "L0",
+                    ),
+                    "dispatch version gate failed",
+                ),
+            )
+            for name, arguments, expected_output in cases:
+                with self.subTest(script=name):
+                    marker.unlink(missing_ok=True)
+                    result = run(
+                        sys.executable,
+                        "-I",
+                        str(SKILL_ROOT / "scripts" / name),
+                        *arguments,
+                        env=environment,
+                    )
+                    self.assertIn(expected_output, result.stdout)
+                    self.assertFalse(
+                        marker.exists(),
+                        f"{name} child executed PYTHONPATH sitecustomize",
+                    )
+
     def test_initializer_renderer_and_validator_smoke_flow(self) -> None:
         with tempfile.TemporaryDirectory(prefix="agentdesk-release-smoke-") as temp:
             project = Path(temp) / "demo"
@@ -273,7 +406,11 @@ class ReleaseSmokeTests(unittest.TestCase):
                 "--allow-development-release",
             )
             self.assertEqual(
-                idempotent_result.returncode, 0, idempotent_result.stdout
+                idempotent_result.returncode, 2, idempotent_result.stdout
+            )
+            self.assertIn(
+                "limited to creating a fresh disposable",
+                idempotent_result.stdout,
             )
             self.assertEqual(lock_bytes, lock_path.read_bytes())
 
@@ -338,6 +475,23 @@ class ReleaseSmokeTests(unittest.TestCase):
             )
             for relative, content in generated_before.items():
                 self.assertEqual(content, (project / relative).read_bytes())
+
+            migration_render = run(
+                sys.executable,
+                str(SKILL_ROOT / "scripts" / "render_views.py"),
+                "--project",
+                str(project),
+                "--migration-prepare",
+            )
+            self.assertEqual(
+                migration_render.returncode, 1, migration_render.stdout
+            )
+            self.assertIn(
+                "version compatibility gate blocked migrate",
+                migration_render.stdout,
+            )
+            for relative, content in generated_before.items():
+                self.assertEqual(content, (project / relative).read_bytes())
             self.assertIn(
                 "source=docs/pm/consultations/*/consultation.yaml",
                 (project / "docs/pm/CONSULTATIONS.md").read_text(encoding="utf-8"),
@@ -373,6 +527,22 @@ class ReleaseSmokeTests(unittest.TestCase):
             )
             self.assertEqual(validate_result.returncode, 0, validate_result.stdout)
             self.assertRegex(validate_result.stdout, r"SUMMARY \d+ pass\(es\), \d+ warning\(s\), 0 error\(s\)")
+
+            migration_validate = run(
+                sys.executable,
+                str(SKILL_ROOT / "scripts" / "validate_project.py"),
+                "--project",
+                str(project),
+                "--pre-commit",
+                "--migration-prepare",
+            )
+            self.assertEqual(
+                migration_validate.returncode, 1, migration_validate.stdout
+            )
+            self.assertIn(
+                "migrate requires release_status 'stable'",
+                migration_validate.stdout,
+            )
 
             ignored = run(
                 "git",

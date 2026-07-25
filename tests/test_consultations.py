@@ -602,12 +602,16 @@ class ConsultationValidationTests(unittest.TestCase):
         )
 
     def _run_renderer(self, *extra: str) -> subprocess.CompletedProcess[str]:
+        migration_prepare = (
+            [] if "--check" in extra else ["--migration-prepare"]
+        )
         return subprocess.run(
             [
                 sys.executable,
                 str(self.renderer_path),
                 "--project",
                 str(self.project),
+                *migration_prepare,
                 *extra,
             ],
             check=False,

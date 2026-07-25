@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -10,6 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+from unittest import mock
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +20,13 @@ SCRIPT = SKILL_ROOT / "scripts" / "adopt_legacy_project.py"
 STATE_FILE = Path("docs/pm/state/tasks.yaml")
 LOCK_FILE = Path("docs/pm/AGENTDESK.lock.json")
 SOURCE_COMMIT = "7" * 40
+ADOPTER_SPEC = importlib.util.spec_from_file_location(
+    "agentdesk_adopt_legacy_project", SCRIPT
+)
+if ADOPTER_SPEC is None or ADOPTER_SPEC.loader is None:
+    raise RuntimeError("cannot load legacy adopter")
+ADOPTER = importlib.util.module_from_spec(ADOPTER_SPEC)
+ADOPTER_SPEC.loader.exec_module(ADOPTER)
 
 
 def write_json(path: Path, value: Dict[str, Any]) -> None:
@@ -99,6 +108,90 @@ def make_tree_writable(root: Path) -> None:
             path.chmod(0o755)
         elif path.is_file():
             path.chmod(0o755 if path.stat().st_mode & 0o111 else 0o644)
+
+
+def replace_tool_with_state_mutating_wrapper(
+    tool: Path, task_id: str
+) -> None:
+    implementation = tool.with_name(
+        "_{}_before_state_mutation.py".format(tool.stem)
+    )
+    shutil.copy2(tool, implementation)
+    tool.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env python3",
+                "import json",
+                "import runpy",
+                "import sys",
+                "from pathlib import Path",
+                "",
+                "try:",
+                "    runpy.run_path(",
+                "        str(Path(__file__).with_name({})),"
+                .format(json.dumps(implementation.name)),
+                "        run_name='__main__',",
+                "    )",
+                "except SystemExit as exc:",
+                "    if exc.code not in (None, 0):",
+                "        raise",
+                "",
+                "project = Path(sys.argv[sys.argv.index('--project') + 1])",
+                "state_path = project / 'docs/pm/state/tasks.yaml'",
+                "state = json.loads(state_path.read_text(encoding='utf-8'))",
+                "state['tasks'].append(",
+                "    {",
+                "        'task_id': {},".format(json.dumps(task_id)),
+                "        'state': 'integrated',",
+                "        'attempt': 0,",
+                "        'current_dispatch': None,",
+                "        'blocked_attempt_valid': None,",
+                "    }",
+                ")",
+                "state_path.write_text(",
+                "    json.dumps(state, ensure_ascii=False, indent=2) + '\\n',",
+                "    encoding='utf-8',",
+                ")",
+                "raise SystemExit(0)",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+
+def replace_initializer_with_unrelated_file_wrapper(tool: Path) -> None:
+    implementation = tool.with_name("_init_project_before_unrelated_file.py")
+    shutil.copy2(tool, implementation)
+    tool.write_text(
+        "\n".join(
+            (
+                "#!/usr/bin/env python3",
+                "import runpy",
+                "import sys",
+                "from pathlib import Path",
+                "",
+                "try:",
+                "    runpy.run_path(",
+                "        str(Path(__file__).with_name({})),"
+                .format(json.dumps(implementation.name)),
+                "        run_name='__main__',",
+                "    )",
+                "except SystemExit as exc:",
+                "    if exc.code not in (None, 0):",
+                "        raise",
+                "",
+                "project = Path(sys.argv[sys.argv.index('--project') + 1])",
+                "(project / 'unrelated-concurrent.txt').write_text(",
+                "    'not part of the adoption plan\\n',",
+                "    encoding='utf-8',",
+                ")",
+                "raise SystemExit(0)",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
 
 
 class LegacyAdoptionTests(unittest.TestCase):
@@ -183,6 +276,12 @@ class LegacyAdoptionTests(unittest.TestCase):
         name: str = "stable-bundle",
         *,
         failing_initializer: bool = False,
+        mutating_initializer: bool = False,
+        unrelated_file_initializer: bool = False,
+        failing_renderer: bool = False,
+        failing_renderer_check: bool = False,
+        mutating_renderer: bool = False,
+        failing_validator: bool = False,
         read_only: bool = True,
     ) -> Path:
         bundle = self.root / name
@@ -194,6 +293,57 @@ class LegacyAdoptionTests(unittest.TestCase):
                 "import sys\n"
                 "print('intentional initializer failure', file=sys.stderr)\n"
                 "raise SystemExit(9)\n",
+                encoding="utf-8",
+            )
+        if mutating_initializer:
+            replace_tool_with_state_mutating_wrapper(
+                bundle / "scripts" / "init_project.py",
+                "TC-INIT-MUTATION",
+            )
+        if unrelated_file_initializer:
+            replace_initializer_with_unrelated_file_wrapper(
+                bundle / "scripts" / "init_project.py"
+            )
+        if failing_renderer:
+            renderer = bundle / "scripts" / "render_views.py"
+            renderer.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "print('intentional renderer failure', file=sys.stderr)\n"
+                "raise SystemExit(8)\n",
+                encoding="utf-8",
+            )
+        if failing_renderer_check:
+            renderer = bundle / "scripts" / "render_views.py"
+            implementation = bundle / "scripts" / "_render_views_impl.py"
+            shutil.copy2(renderer, implementation)
+            renderer.write_text(
+                "#!/usr/bin/env python3\n"
+                "import runpy\n"
+                "import sys\n"
+                "from pathlib import Path\n"
+                "if '--check' in sys.argv:\n"
+                "    print('intentional renderer check failure', "
+                "file=sys.stderr)\n"
+                "    raise SystemExit(8)\n"
+                "runpy.run_path(\n"
+                "    str(Path(__file__).with_name('_render_views_impl.py')),\n"
+                "    run_name='__main__',\n"
+                ")\n",
+                encoding="utf-8",
+            )
+        if mutating_renderer:
+            replace_tool_with_state_mutating_wrapper(
+                bundle / "scripts" / "render_views.py",
+                "TC-RENDER-MUTATION",
+            )
+        if failing_validator:
+            validator = bundle / "scripts" / "validate_project.py"
+            validator.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "print('intentional validator failure', file=sys.stderr)\n"
+                "raise SystemExit(7)\n",
                 encoding="utf-8",
             )
         manifest_path = bundle / "release-manifest.json"
@@ -227,17 +377,73 @@ class LegacyAdoptionTests(unittest.TestCase):
         script: Path = SCRIPT,
         apply: bool = False,
         acknowledge: bool = False,
+        isolated: bool = False,
+        environment: Optional[Dict[str, str]] = None,
     ) -> Tuple[subprocess.CompletedProcess[str], Dict[str, Any]]:
-        command = [
-            sys.executable,
-            str(script),
-            "--project",
-            str(project),
-            "--apply" if apply else "--dry-run",
-            "--json",
-        ]
+        command = [sys.executable]
+        if isolated:
+            command.append("-I")
+        command.extend(
+            [
+                str(script),
+                "--project",
+                str(project),
+                "--apply" if apply else "--dry-run",
+                "--json",
+            ]
+        )
         if acknowledge:
             command.append("--acknowledge-legacy-unpinned")
+        result = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=150,
+            env=environment,
+        )
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:  # pragma: no cover
+            self.fail(
+                "adoption command did not emit JSON: {}\nstdout={!r}\n"
+                "stderr={!r}".format(exc, result.stdout, result.stderr)
+            )
+        return result, payload
+
+    def run_compatibility(
+        self, bundle: Path, project: Path, operation: str
+    ) -> Tuple[subprocess.CompletedProcess[str], Dict[str, Any]]:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                str(bundle / "scripts" / "check_compatibility.py"),
+                "--project",
+                str(project),
+                "--operation",
+                operation,
+                "--json",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+        )
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:  # pragma: no cover
+            self.fail(
+                "compatibility command did not emit JSON: {}\nstdout={!r}\n"
+                "stderr={!r}".format(exc, result.stdout, result.stderr)
+            )
+        return result, payload
+
+    def run_json_command(
+        self, command: list[str]
+    ) -> Tuple[subprocess.CompletedProcess[str], Dict[str, Any]]:
         result = subprocess.run(
             command,
             check=False,
@@ -250,8 +456,9 @@ class LegacyAdoptionTests(unittest.TestCase):
             payload = json.loads(result.stdout)
         except json.JSONDecodeError as exc:  # pragma: no cover
             self.fail(
-                "adoption command did not emit JSON: {}\nstdout={!r}\n"
-                "stderr={!r}".format(exc, result.stdout, result.stderr)
+                "command did not emit JSON: {}\nstdout={!r}\nstderr={!r}".format(
+                    exc, result.stdout, result.stderr
+                )
             )
         return result, payload
 
@@ -276,6 +483,10 @@ class LegacyAdoptionTests(unittest.TestCase):
             "--project",
             "--dry-run",
             "--apply",
+            "--resume-after-lock",
+            "--verify-prepared",
+            "--expected-head",
+            "--expected-state-sha256",
             "--acknowledge-legacy-unpinned",
             "--json",
         ):
@@ -422,6 +633,63 @@ class LegacyAdoptionTests(unittest.TestCase):
         self.assertEqual(2, result.returncode, payload)
         self.assert_error(payload, "invalid_json")
 
+    def test_unknown_task_state_is_rejected_before_lock_creation(self) -> None:
+        bundle = self.make_stable_bundle("invalid-task-state-bundle")
+        project = self.make_project(
+            "invalid-task-state-project",
+            state=self.state(
+                tasks=[
+                    {
+                        "task_id": "TC-900",
+                        "state": "bogus",
+                        "attempt": 0,
+                        "current_dispatch": None,
+                        "blocked_attempt_valid": None,
+                    }
+                ]
+            ),
+        )
+        before = snapshot_worktree(project)
+
+        result, payload = self.run_adoption(
+            project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+        )
+
+        self.assertEqual(2, result.returncode, payload)
+        self.assert_error(payload, "invalid_state")
+        self.assertFalse((project / LOCK_FILE).exists())
+        self.assertEqual(before, snapshot_worktree(project))
+
+    def test_ignored_public_control_plane_is_rejected_before_lock(self) -> None:
+        bundle = self.make_stable_bundle("ignored-public-paths-bundle")
+        project = self.make_project("ignored-public-paths-project")
+        (project / ".gitignore").write_text(
+            "AGENTS.md\ndocs/pm/\n.agentdesk/runtime/\n",
+            encoding="utf-8",
+        )
+        added = self.run_git(project, "add", ".gitignore")
+        self.assertEqual(0, added.returncode, added.stderr)
+        committed = self.run_git(
+            project, "commit", "-m", "ignore future control plane"
+        )
+        self.assertEqual(0, committed.returncode, committed.stderr)
+        before = snapshot_worktree(project)
+
+        result, payload = self.run_adoption(
+            project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+        )
+
+        self.assertEqual(2, result.returncode, payload)
+        self.assert_error(payload, "public_control_plane_ignored")
+        self.assertFalse((project / LOCK_FILE).exists())
+        self.assertEqual(before, snapshot_worktree(project))
+
     def test_git_root_head_and_clean_baseline_are_required(self) -> None:
         no_head = self.root / "no-head"
         no_head.mkdir()
@@ -460,7 +728,17 @@ class LegacyAdoptionTests(unittest.TestCase):
         )
         agents = project / "AGENTS.md"
         agents.write_text("user-owned instructions\n", encoding="utf-8")
-        added = self.run_git(project, "add", "AGENTS.md")
+        board = project / "docs/pm/BOARD.md"
+        status = project / "docs/pm/STATUS.md"
+        board.write_text("stale legacy board\n", encoding="utf-8")
+        status.write_text("stale legacy status\n", encoding="utf-8")
+        added = self.run_git(
+            project,
+            "add",
+            "AGENTS.md",
+            "docs/pm/BOARD.md",
+            "docs/pm/STATUS.md",
+        )
         self.assertEqual(0, added.returncode, added.stderr)
         committed = self.run_git(
             project, "commit", "-m", "preserve user instructions"
@@ -471,6 +749,16 @@ class LegacyAdoptionTests(unittest.TestCase):
         planned, plan = self.run_adoption(project, script=script)
         self.assertEqual(0, planned.returncode, plan)
         self.assertTrue(plan["release"]["apply_eligible"])
+        self.assertEqual(
+            [
+                "create",
+                "initialize_missing",
+                "render_views",
+                "check_views",
+                "validate_precommit",
+            ],
+            [item["operation"] for item in plan["plan"]],
+        )
         self.assertEqual(before, snapshot_worktree(project))
 
         missing_ack, missing_ack_payload = self.run_adoption(
@@ -486,9 +774,15 @@ class LegacyAdoptionTests(unittest.TestCase):
             project, script=script, apply=True, acknowledge=True
         )
         self.assertEqual(0, applied.returncode, payload)
-        self.assertEqual("adopted", payload["status"])
-        self.assertTrue(payload["complete"])
+        self.assertEqual("prepared", payload["status"])
+        self.assertTrue(payload["prepared"])
+        self.assertFalse(payload["complete"])
+        self.assertTrue(payload["commit_required"])
+        self.assertTrue(payload["strict_validation_pending"])
         self.assertTrue(payload["lock_created"])
+        self.assertEqual(0, payload["renderer"]["returncode"])
+        self.assertEqual(0, payload["view_check"]["returncode"])
+        self.assertEqual(0, payload["precommit_validation"]["returncode"])
         lock = json.loads((project / LOCK_FILE).read_text(encoding="utf-8"))
         manifest = json.loads(
             (bundle / "release-manifest.json").read_text(encoding="utf-8")
@@ -508,7 +802,28 @@ class LegacyAdoptionTests(unittest.TestCase):
         self.assertEqual(
             "user-owned instructions\n", agents.read_text(encoding="utf-8")
         )
+        self.assertNotEqual(
+            "stale legacy board\n", board.read_text(encoding="utf-8")
+        )
+        self.assertNotEqual(
+            "stale legacy status\n", status.read_text(encoding="utf-8")
+        )
         self.assertTrue((project / "docs/pm/CHECKS.yaml").is_file())
+        rendered = subprocess.run(
+            [
+                sys.executable,
+                str(bundle / "scripts" / "render_views.py"),
+                "--project",
+                str(project),
+                "--check",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(0, rendered.returncode, rendered.stdout)
 
         after = snapshot_worktree(project)
         repeated, repeated_payload = self.run_adoption(
@@ -517,6 +832,172 @@ class LegacyAdoptionTests(unittest.TestCase):
         self.assertEqual(2, repeated.returncode, repeated_payload)
         self.assert_error(repeated_payload, "already_pinned")
         self.assertEqual(after, snapshot_worktree(project))
+
+    def test_prepared_scoped_commit_verifies_as_durable(self) -> None:
+        bundle = self.make_stable_bundle("durable-bundle")
+        project = self.make_project("durable-project")
+        applied, payload = self.run_adoption(
+            project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+        )
+        self.assertEqual(0, applied.returncode, payload)
+        self.assertEqual("prepared", payload["status"])
+        self.assertEqual(
+            1, len(payload["post_commit_verification"]["commands"])
+        )
+        verify_command = payload["post_commit_verification"]["commands"][0]
+        self.assertIn("--verify-prepared", verify_command)
+
+        added = self.run_git(project, "add", "-A")
+        self.assertEqual(0, added.returncode, added.stderr)
+        committed = self.run_git(
+            project, "commit", "-m", "adopt AgentDesk release"
+        )
+        self.assertEqual(0, committed.returncode, committed.stderr)
+
+        verified, verification = self.run_json_command(verify_command)
+        self.assertEqual(0, verified.returncode, verification)
+        self.assertEqual("durable", verification["status"])
+        self.assertTrue(verification["complete"])
+        self.assertTrue(verification["durable"])
+        self.assertEqual(0, verification["writer"]["returncode"])
+        self.assertEqual(0, verification["view_check"]["returncode"])
+        self.assertEqual(
+            0, verification["strict_validation"]["returncode"]
+        )
+        human_command = [
+            item for item in verify_command if item != "--json"
+        ]
+        human = subprocess.run(
+            human_command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=150,
+        )
+        self.assertEqual(0, human.returncode, human.stdout)
+        self.assertIn("STATUS durable", human.stdout)
+        self.assertIn("DURABLE true", human.stdout)
+
+    def test_prepared_commit_rejects_unrelated_business_path(self) -> None:
+        bundle = self.make_stable_bundle("overbroad-bundle")
+        project = self.make_project("overbroad-project")
+        applied, payload = self.run_adoption(
+            project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+        )
+        self.assertEqual(0, applied.returncode, payload)
+        (project / "unrelated-business-change.txt").write_text(
+            "must not ride with migration\n", encoding="utf-8"
+        )
+        added = self.run_git(project, "add", "-A")
+        self.assertEqual(0, added.returncode, added.stderr)
+        committed = self.run_git(
+            project, "commit", "-m", "overbroad adoption"
+        )
+        self.assertEqual(0, committed.returncode, committed.stderr)
+
+        verified, verification = self.run_json_command(
+            payload["post_commit_verification"]["commands"][0]
+        )
+        self.assertEqual(2, verified.returncode, verification)
+        self.assert_error(verification, "prepared_commit_out_of_scope")
+
+    def test_prepared_commit_binds_allowed_path_contents(self) -> None:
+        bundle = self.make_stable_bundle("content-fence-bundle")
+        cases = (
+            (
+                "gitignore-extra",
+                Path(".gitignore"),
+                "unrelated-secret.txt\n",
+            ),
+            (
+                "template-extra",
+                Path("docs/pm/CHECKS.yaml"),
+                "\n# unrelated content\n",
+            ),
+        )
+        for name, relative, suffix in cases:
+            with self.subTest(name=name):
+                project = self.make_project(name)
+                applied, payload = self.run_adoption(
+                    project,
+                    script=(
+                        bundle / "scripts" / "adopt_legacy_project.py"
+                    ),
+                    apply=True,
+                    acknowledge=True,
+                )
+                self.assertEqual(0, applied.returncode, payload)
+                path = project / relative
+                path.write_text(
+                    path.read_text(encoding="utf-8") + suffix,
+                    encoding="utf-8",
+                )
+                added = self.run_git(project, "add", "-A")
+                self.assertEqual(0, added.returncode, added.stderr)
+                committed = self.run_git(
+                    project, "commit", "-m", "tamper allowed content"
+                )
+                self.assertEqual(0, committed.returncode, committed.stderr)
+
+                verified, verification = self.run_json_command(
+                    payload["post_commit_verification"]["commands"][0]
+                )
+                self.assertEqual(2, verified.returncode, verification)
+                self.assert_error(
+                    verification, "prepared_content_mismatch"
+                )
+
+    def test_recovery_rejects_changed_head_and_unplanned_path(self) -> None:
+        bundle = self.make_stable_bundle(
+            "recovery-fence-bundle", failing_initializer=True
+        )
+
+        path_project = self.make_project("recovery-unplanned-path")
+        failed, payload = self.run_adoption(
+            path_project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+        )
+        self.assertEqual(1, failed.returncode, payload)
+        (path_project / "outside-plan.txt").write_text(
+            "concurrent change\n", encoding="utf-8"
+        )
+        resumed, recovery = self.run_json_command(
+            payload["recovery"]["command"]
+        )
+        self.assertEqual(2, resumed.returncode, recovery)
+        self.assert_error(recovery, "project_changed_after_lock")
+
+        head_project = self.make_project("recovery-changed-head")
+        failed, payload = self.run_adoption(
+            head_project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+        )
+        self.assertEqual(1, failed.returncode, payload)
+        (head_project / "baseline-moved.txt").write_text(
+            "new commit\n", encoding="utf-8"
+        )
+        added = self.run_git(head_project, "add", "baseline-moved.txt")
+        self.assertEqual(0, added.returncode, added.stderr)
+        committed = self.run_git(
+            head_project, "commit", "-m", "move baseline"
+        )
+        self.assertEqual(0, committed.returncode, committed.stderr)
+        resumed, recovery = self.run_json_command(
+            payload["recovery"]["command"]
+        )
+        self.assertEqual(2, resumed.returncode, recovery)
+        self.assert_error(recovery, "recovery_head_changed")
 
     def test_mutable_stable_bundle_cannot_apply(self) -> None:
         bundle = self.make_stable_bundle("mutable-bundle", read_only=False)
@@ -555,9 +1036,333 @@ class LegacyAdoptionTests(unittest.TestCase):
         self.assertTrue((project / LOCK_FILE).is_file())
         self.assertTrue(payload["recovery"]["lock_retained"])
         self.assertIn(
-            str((bundle / "scripts" / "init_project.py").resolve()),
+            str((bundle / "scripts" / "adopt_legacy_project.py").resolve()),
             payload["recovery"]["command"],
         )
+        self.assertIn(
+            "--resume-after-lock",
+            payload["recovery"]["command"],
+        )
+
+    def test_human_failure_output_prints_fenced_recovery_command(self) -> None:
+        bundle = self.make_stable_bundle(
+            "human-recovery-bundle", failing_initializer=True
+        )
+        project = self.make_project("human-recovery-project")
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                str(bundle / "scripts" / "adopt_legacy_project.py"),
+                "--project",
+                str(project),
+                "--apply",
+                "--acknowledge-legacy-unpinned",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=150,
+        )
+        self.assertEqual(1, result.returncode, result.stdout)
+        self.assertIn("STATUS incomplete", result.stdout)
+        self.assertIn("RECOVERY_COMMAND", result.stdout)
+        self.assertIn("--resume-after-lock", result.stdout)
+
+    def test_renderer_failure_retains_lock_and_reports_recovery(self) -> None:
+        bundle = self.make_stable_bundle(
+            "failing-renderer-bundle", failing_renderer=True
+        )
+        project = self.make_project("renderer-failure")
+
+        result, payload = self.run_adoption(
+            project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+        )
+
+        self.assertEqual(1, result.returncode, payload)
+        self.assertEqual("incomplete", payload["status"])
+        self.assertTrue(payload["lock_created"])
+        self.assertFalse(payload["complete"])
+        self.assert_error(payload, "renderer_failed_after_lock")
+        self.assertTrue((project / LOCK_FILE).is_file())
+        self.assertTrue(payload["recovery"]["lock_retained"])
+        self.assertTrue(payload["recovery"]["initializer_completed"])
+        self.assertIn(
+            str((bundle / "scripts" / "adopt_legacy_project.py").resolve()),
+            payload["recovery"]["command"],
+        )
+
+    def test_renderer_check_failure_is_incomplete(self) -> None:
+        bundle = self.make_stable_bundle(
+            "failing-renderer-check-bundle",
+            failing_renderer_check=True,
+        )
+        project = self.make_project("renderer-check-failure")
+
+        result, payload = self.run_adoption(
+            project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+        )
+
+        self.assertEqual(1, result.returncode, payload)
+        self.assertEqual("incomplete", payload["status"])
+        self.assertFalse(payload["complete"])
+        self.assert_error(payload, "renderer_check_failed_after_lock")
+        self.assertTrue((project / LOCK_FILE).is_file())
+        self.assertEqual(0, payload["renderer"]["returncode"])
+        self.assertEqual(8, payload["view_check"]["returncode"])
+        self.assertEqual(1, len(payload["recovery"]["commands"]))
+        self.assertIn(
+            "--resume-after-lock", payload["recovery"]["commands"][0]
+        )
+
+    def test_precommit_validation_failure_is_incomplete(self) -> None:
+        bundle = self.make_stable_bundle(
+            "failing-validator-bundle", failing_validator=True
+        )
+        project = self.make_project("validator-failure")
+
+        result, payload = self.run_adoption(
+            project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+        )
+
+        self.assertEqual(1, result.returncode, payload)
+        self.assertEqual("incomplete", payload["status"])
+        self.assertFalse(payload["complete"])
+        self.assert_error(
+            payload, "precommit_validation_failed_after_lock"
+        )
+        self.assertTrue((project / LOCK_FILE).is_file())
+        self.assertEqual(0, payload["renderer"]["returncode"])
+        self.assertEqual(0, payload["view_check"]["returncode"])
+        self.assertEqual(7, payload["precommit_validation"]["returncode"])
+
+    def test_initializer_success_with_state_mutation_is_fenced(self) -> None:
+        bundle = self.make_stable_bundle(
+            "mutating-initializer-bundle",
+            mutating_initializer=True,
+        )
+        project = self.make_project("mutating-initializer")
+
+        result, payload = self.run_adoption(
+            project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+        )
+
+        self.assertEqual(1, result.returncode, payload)
+        self.assertEqual("incomplete", payload["status"])
+        self.assertFalse(payload["complete"])
+        self.assertTrue(payload["lock_created"])
+        self.assert_error(payload, "project_changed_after_lock")
+        self.assertEqual(0, payload["initializer"]["returncode"])
+        self.assertNotIn("renderer", payload)
+        self.assertNotIn("view_check", payload)
+        self.assertNotIn("precommit_validation", payload)
+        state = json.loads(
+            (project / STATE_FILE).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            ["TC-INIT-MUTATION"],
+            [task["task_id"] for task in state["tasks"]],
+        )
+
+    def test_renderer_success_with_state_mutation_is_fenced(self) -> None:
+        bundle = self.make_stable_bundle(
+            "mutating-renderer-bundle",
+            mutating_renderer=True,
+        )
+        project = self.make_project("mutating-renderer")
+
+        result, payload = self.run_adoption(
+            project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+        )
+
+        self.assertEqual(1, result.returncode, payload)
+        self.assertEqual("incomplete", payload["status"])
+        self.assertFalse(payload["complete"])
+        self.assertTrue(payload["lock_created"])
+        self.assert_error(payload, "project_changed_after_lock")
+        self.assertEqual(0, payload["initializer"]["returncode"])
+        self.assertEqual(0, payload["renderer"]["returncode"])
+        self.assertNotIn("view_check", payload)
+        self.assertNotIn("precommit_validation", payload)
+        state = json.loads(
+            (project / STATE_FILE).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            ["TC-RENDER-MUTATION"],
+            [task["task_id"] for task in state["tasks"]],
+        )
+
+    def test_partial_lock_write_never_publishes_final_path(self) -> None:
+        project = self.root / "partial-lock-write"
+        pm_directory = project / "docs" / "pm"
+        pm_directory.mkdir(parents=True)
+        real_write = ADOPTER.os.write
+        calls = 0
+
+        def partial_then_fail(descriptor: int, value: bytes) -> int:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return real_write(descriptor, value[:7])
+            raise OSError(28, "intentional no space left")
+
+        with mock.patch.object(
+            ADOPTER.os, "write", side_effect=partial_then_fail
+        ):
+            with self.assertRaises(ADOPTER.AdoptionError) as raised:
+                ADOPTER._create_lock(project, b'{"complete": true}\n')
+
+        self.assertEqual("lock_create_failed", raised.exception.code)
+        self.assertFalse((project / LOCK_FILE).exists())
+        self.assertEqual(
+            [],
+            list(pm_directory.glob(".AGENTDESK.lock.*.tmp")),
+        )
+
+    def test_lock_parent_swap_cannot_escape_project(self) -> None:
+        project = self.root / "lock-parent-swap"
+        pm_directory = project / "docs" / "pm"
+        pm_directory.mkdir(parents=True)
+        held_directory = project / "docs" / "pm-held"
+        outside = self.root / "outside-lock-target"
+        outside.mkdir()
+        original_verify = ADOPTER._verify_open_project_path
+        calls = 0
+
+        def swap_before_publish(
+            project_path: Path, descriptors: Tuple[int, int, int]
+        ) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                pm_directory.rename(held_directory)
+                pm_directory.symlink_to(outside, target_is_directory=True)
+            original_verify(project_path, descriptors)
+
+        with mock.patch.object(
+            ADOPTER,
+            "_verify_open_project_path",
+            side_effect=swap_before_publish,
+        ):
+            with self.assertRaises(ADOPTER.AdoptionError) as raised:
+                ADOPTER._create_lock(project, b'{"complete": true}\n')
+
+        self.assertEqual("project_path_changed", raised.exception.code)
+        self.assertFalse((outside / LOCK_FILE.name).exists())
+        self.assertFalse((held_directory / LOCK_FILE.name).exists())
+        self.assertEqual(
+            [],
+            list(held_directory.glob(".AGENTDESK.lock.*.tmp")),
+        )
+
+    def test_initializer_unrelated_file_is_fenced_after_lock(self) -> None:
+        bundle = self.make_stable_bundle(
+            "unrelated-file-initializer-bundle",
+            unrelated_file_initializer=True,
+        )
+        project = self.make_project("unrelated-file-initializer")
+
+        result, payload = self.run_adoption(
+            project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+        )
+
+        self.assertEqual(1, result.returncode, payload)
+        self.assertEqual("incomplete", payload["status"])
+        self.assertFalse(payload["complete"])
+        self.assertTrue(payload["lock_created"])
+        self.assertEqual(0, payload["initializer"]["returncode"])
+        self.assert_error(payload, "project_changed_after_lock")
+        self.assertNotIn("renderer", payload)
+        self.assertNotIn("view_check", payload)
+        self.assertNotIn("precommit_validation", payload)
+
+    def test_pythonpath_sitecustomize_is_not_executed_by_adoption_chain(
+        self,
+    ) -> None:
+        bundle = self.make_stable_bundle("isolated-python-bundle")
+        project = self.make_project("isolated-python-project")
+        injection_root = self.root / "pythonpath-injection"
+        injection_root.mkdir()
+        marker = self.root / "pythonpath-injection-executed"
+        (injection_root / "sitecustomize.py").write_text(
+            "\n".join(
+                (
+                    "import os",
+                    "from pathlib import Path",
+                    "marker = os.environ.get('AGENTDESK_TEST_INJECTION_MARKER')",
+                    "if marker:",
+                    "    Path(marker).write_text(",
+                    "        'sitecustomize executed\\n', encoding='utf-8'",
+                    "    )",
+                    "",
+                )
+            ),
+            encoding="utf-8",
+        )
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(injection_root)
+        environment["AGENTDESK_TEST_INJECTION_MARKER"] = str(marker)
+
+        result, payload = self.run_adoption(
+            project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+            isolated=True,
+            environment=environment,
+        )
+
+        self.assertEqual(0, result.returncode, payload)
+        self.assertEqual("prepared", payload["status"])
+        self.assertFalse(
+            marker.exists(),
+            "verified same-bundle commands executed PYTHONPATH sitecustomize",
+        )
+
+    def test_prepared_lock_blocks_write_but_permits_migrate(self) -> None:
+        bundle = self.make_stable_bundle("prepared-compatibility-bundle")
+        project = self.make_project("prepared-compatibility-project")
+
+        applied, adoption = self.run_adoption(
+            project,
+            script=bundle / "scripts" / "adopt_legacy_project.py",
+            apply=True,
+            acknowledge=True,
+        )
+        self.assertEqual(0, applied.returncode, adoption)
+        self.assertEqual("prepared", adoption["status"])
+        self.assertFalse(adoption["complete"])
+
+        writer, writer_payload = self.run_compatibility(
+            bundle, project, "write"
+        )
+        self.assertNotEqual(0, writer.returncode, writer_payload)
+        self.assertFalse(writer_payload["compatible"], writer_payload)
+
+        migrator, migrator_payload = self.run_compatibility(
+            bundle, project, "migrate"
+        )
+        self.assertEqual(0, migrator.returncode, migrator_payload)
+        self.assertTrue(migrator_payload["compatible"], migrator_payload)
 
 
 if __name__ == "__main__":

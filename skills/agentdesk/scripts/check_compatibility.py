@@ -155,22 +155,14 @@ def _reject_duplicate_keys(pairs: Iterable[Tuple[str, Any]]) -> Dict[str, Any]:
     return value
 
 
-def _load_json_object(path: Path, label: str) -> Dict[str, Any]:
-    if path.is_symlink():
-        raise CompatibilityError(
-            "unsafe_symlink", f"{label} must not be a symbolic link: {path}"
-        )
-    if not path.is_file():
-        raise CompatibilityError("missing_file", f"{label} does not exist: {path}")
+def _parse_json_object_bytes(
+    raw_bytes: bytes, path: Path, label: str
+) -> Dict[str, Any]:
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = raw_bytes.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise CompatibilityError(
             "invalid_utf8", f"{label} is not valid UTF-8: {path}"
-        ) from exc
-    except OSError as exc:
-        raise CompatibilityError(
-            "read_error", f"cannot read {label} at {path}: {exc}"
         ) from exc
     try:
         value = json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
@@ -190,6 +182,99 @@ def _load_json_object(path: Path, label: str) -> Dict[str, Any]:
             "invalid_object", f"{label} must contain a top-level object: {path}"
         )
     return value
+
+
+def _load_json_object_and_bytes(
+    path: Path, label: str
+) -> Tuple[Dict[str, Any], bytes]:
+    if path.is_symlink():
+        raise CompatibilityError(
+            "unsafe_symlink", f"{label} must not be a symbolic link: {path}"
+        )
+    if not path.is_file():
+        raise CompatibilityError("missing_file", f"{label} does not exist: {path}")
+    try:
+        raw_bytes = path.read_bytes()
+    except OSError as exc:
+        raise CompatibilityError(
+            "read_error", f"cannot read {label} at {path}: {exc}"
+        ) from exc
+    return _parse_json_object_bytes(raw_bytes, path, label), raw_bytes
+
+
+def _load_json_object(path: Path, label: str) -> Dict[str, Any]:
+    value, _raw_bytes = _load_json_object_and_bytes(path, label)
+    return value
+
+
+def _read_project_regular_file(
+    project: Path, relative_path: Path, label: str
+) -> bytes:
+    """Read one control-plane file without following any path symlink."""
+
+    directory_flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        directory_flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        directory_flags |= os.O_NOFOLLOW
+    file_flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        file_flags |= os.O_NOFOLLOW
+
+    opened: List[int] = []
+    file_descriptor: Optional[int] = None
+    try:
+        current_descriptor = os.open(str(project), directory_flags)
+        opened.append(current_descriptor)
+        for component in relative_path.parts[:-1]:
+            current_descriptor = os.open(
+                component,
+                directory_flags,
+                dir_fd=current_descriptor,
+            )
+            opened.append(current_descriptor)
+        file_descriptor = os.open(
+            relative_path.name,
+            file_flags,
+            dir_fd=current_descriptor,
+        )
+        metadata = os.fstat(file_descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise CompatibilityError(
+                "unsafe_project_path",
+                f"{label} must be an ordinary regular file: "
+                f"{project / relative_path}",
+            )
+        chunks: List[bytes] = []
+        while True:
+            chunk = os.read(file_descriptor, 1024 * 1024)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+    except CompatibilityError:
+        raise
+    except FileNotFoundError as exc:
+        raise CompatibilityError(
+            "missing_file",
+            f"{label} does not exist: {project / relative_path}",
+        ) from exc
+    except OSError as exc:
+        code = "unsafe_symlink" if exc.errno in {getattr(os, "ELOOP", 40)} else "read_error"
+        raise CompatibilityError(
+            code,
+            f"cannot safely read {label} at {project / relative_path}: {exc}",
+        ) from exc
+    finally:
+        if file_descriptor is not None:
+            try:
+                os.close(file_descriptor)
+            except OSError:
+                pass
+        for descriptor in reversed(opened):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 def _require_safe_project_path(project: Path, relative: Path, label: str) -> None:
@@ -284,6 +369,122 @@ def _run_git_bytes(project: Path, arguments: Sequence[str], label: str) -> bytes
             "git_inspection_failed", f"cannot inspect {label}: {detail}"
         )
     return result.stdout
+
+
+def _run_git_probe(
+    project: Path, arguments: Sequence[str], label: str
+) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            [
+                "git",
+                "--no-replace-objects",
+                "-C",
+                str(project),
+                *arguments,
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            env=_git_environment(),
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+        raise CompatibilityError(
+            "writer_git_inspection_failed",
+            f"cannot inspect {label} for Writer authorization: {exc}",
+        ) from exc
+
+
+def _verify_mutating_git_boundary(
+    project: Path, *, require_repository: bool
+) -> None:
+    """Bind mutating authorization to this exact project worktree root."""
+
+    git_entry = project / ".git"
+    try:
+        before = git_entry.lstat()
+    except FileNotFoundError:
+        before = None
+    except OSError as exc:
+        raise CompatibilityError(
+            "project_git_inspection_failed",
+            f"cannot inspect project Git authority at {git_entry}: {exc}",
+        ) from exc
+    if before is not None and stat.S_ISLNK(before.st_mode):
+        raise CompatibilityError(
+            "unsafe_project_git",
+            f"mutating operations refuse a symbolic-link Git authority: "
+            f"{git_entry}",
+        )
+
+    root_result = _run_git_probe(
+        project,
+        ("rev-parse", "--show-toplevel"),
+        "project Git worktree root",
+    )
+    if root_result.returncode != 0:
+        if require_repository:
+            raise CompatibilityError(
+                "writer_git_repository_missing",
+                "write requires the project to be an exact Git worktree root "
+                "with a committed AgentDesk project lock",
+            )
+        if before is not None:
+            raise CompatibilityError(
+                "project_git_authority_invalid",
+                f"cannot authorize migration through the Git authority at "
+                f"{git_entry}",
+            )
+        return
+
+    root_text = root_result.stdout.strip()
+    try:
+        reported_root = Path(os.fsdecode(root_text)).resolve(strict=True)
+        expected_root = project.resolve(strict=True)
+    except (OSError, ValueError) as exc:
+        raise CompatibilityError(
+            "project_git_inspection_failed",
+            f"cannot resolve the project Git worktree root: {exc}",
+        ) from exc
+    if not root_text or reported_root != expected_root:
+        raise CompatibilityError(
+            "project_git_root_mismatch",
+            "mutating operations require --project to be the exact Git "
+            f"worktree root; Git reported {os.fsdecode(root_text)!r}",
+        )
+
+    try:
+        after = git_entry.lstat()
+    except FileNotFoundError:
+        after = None
+    except OSError as exc:
+        raise CompatibilityError(
+            "project_git_inspection_failed",
+            f"cannot re-inspect project Git authority at {git_entry}: {exc}",
+        ) from exc
+    if after is not None and stat.S_ISLNK(after.st_mode):
+        raise CompatibilityError(
+            "unsafe_project_git",
+            f"mutating operations refuse a symbolic-link Git authority: "
+            f"{git_entry}",
+        )
+    before_identity = (
+        None
+        if before is None
+        else (before.st_dev, before.st_ino, stat.S_IFMT(before.st_mode))
+    )
+    after_identity = (
+        None
+        if after is None
+        else (after.st_dev, after.st_ino, stat.S_IFMT(after.st_mode))
+    )
+    if before_identity != after_identity:
+        raise CompatibilityError(
+            "project_git_authority_changed",
+            "project .git authority changed while mutating authorization was "
+            "being verified; retry from a stable checkout",
+        )
 
 
 def compute_bundle_digest(bundle_root: Path, manifest_path: Path) -> str:
@@ -675,8 +876,12 @@ def _load_release_manifest(path: Path) -> ReleaseManifest:
     )
 
 
-def _load_project_lock(path: Path, manifest: ReleaseManifest) -> ProjectLock:
-    value = _load_json_object(path, "project lock")
+def _load_project_lock(
+    project: Path, manifest: ReleaseManifest
+) -> Tuple[ProjectLock, bytes]:
+    path = project / LOCK_FILE
+    raw_bytes = _read_project_regular_file(project, LOCK_FILE, "project lock")
+    value = _parse_json_object_bytes(raw_bytes, path, "project lock")
     schema_version = _schema_version(
         value.get("schema_version"), "project lock schema_version"
     )
@@ -736,7 +941,7 @@ def _load_project_lock(path: Path, manifest: ReleaseManifest) -> ProjectLock:
         exact=True,
     )
 
-    return ProjectLock(
+    project_lock = ProjectLock(
         path=path,
         schema_version=schema_version,
         project_id=_nonempty_string(
@@ -767,6 +972,7 @@ def _load_project_lock(path: Path, manifest: ReleaseManifest) -> ProjectLock:
         requires_exact_release=writer_value.get("requires_exact_release"),
         requires_verified_bundle=writer_value.get("requires_verified_bundle"),
     )
+    return project_lock, raw_bytes
 
 
 def _check_operation_support(
@@ -893,7 +1099,12 @@ def _message(code: str, text: str) -> Dict[str, str]:
 def _load_project_state(project: Path) -> Dict[str, Any]:
     state_path = project / STATE_FILE
     _require_safe_project_path(project, STATE_FILE, "canonical task state")
-    state = _load_json_object(state_path, "canonical task state")
+    state_bytes = _read_project_regular_file(
+        project, STATE_FILE, "canonical task state"
+    )
+    state = _parse_json_object_bytes(
+        state_bytes, state_path, "canonical task state"
+    )
     if state.get("schema_version") != TASK_STATE_SCHEMA:
         raise CompatibilityError(
             "invalid_task_state",
@@ -1019,6 +1230,7 @@ def _verify_active_attempt_locks(
     project: Path,
     active_tasks: Sequence[Mapping[str, Any]],
     current_lock_bytes: bytes,
+    writer_head: str,
 ) -> None:
     verified_commits: set[str] = set()
     lock_path = LOCK_FILE.as_posix()
@@ -1033,6 +1245,34 @@ def _verify_active_attempt_locks(
             )
         if commit in verified_commits:
             continue
+        commit_check = _run_git_probe(
+            project,
+            ("cat-file", "-e", f"{commit}^{{commit}}"),
+            f"task_card_commit {commit}",
+        )
+        if commit_check.returncode != 0:
+            raise CompatibilityError(
+                "active_attempt_version_unverified",
+                f"active task {label} task_card_commit must identify a "
+                "readable Git commit object",
+            )
+        ancestry = _run_git_probe(
+            project,
+            ("merge-base", "--is-ancestor", commit, writer_head),
+            f"task_card_commit ancestry for active task {label}",
+        )
+        if ancestry.returncode == 1:
+            raise CompatibilityError(
+                "active_attempt_commit_unreachable",
+                f"active task {label} task_card_commit must be an ancestor "
+                "of the Writer-verified project HEAD",
+            )
+        if ancestry.returncode != 0:
+            raise CompatibilityError(
+                "active_attempt_version_unverified",
+                f"cannot verify active task {label} task_card_commit ancestry "
+                "against the Writer-verified project HEAD",
+            )
         tree_entry = _run_git_bytes(
             project,
             ("ls-tree", "-z", commit, "--", lock_path),
@@ -1070,6 +1310,170 @@ def _verify_active_attempt_locks(
                 "AgentDesk project lock",
             )
         verified_commits.add(commit)
+    final_head = _run_git_probe(
+        project,
+        ("rev-parse", "--verify", "HEAD^{commit}"),
+        "project HEAD after active-attempt verification",
+    )
+    if (
+        final_head.returncode != 0
+        or final_head.stdout.decode("ascii", errors="ignore").strip().lower()
+        != writer_head.lower()
+    ):
+        raise CompatibilityError(
+            "writer_head_changed",
+            "project HEAD changed while verifying active-attempt ancestry; "
+            "retry from a stable checkout",
+        )
+
+
+def _verify_writer_lock_at_head(
+    project: Path, current_lock_bytes: bytes
+) -> Dict[str, str]:
+    lock_path = LOCK_FILE.as_posix()
+    _verify_mutating_git_boundary(project, require_repository=True)
+
+    head_result = _run_git_probe(
+        project,
+        ("rev-parse", "--verify", "HEAD^{commit}"),
+        "project HEAD",
+    )
+    head = head_result.stdout.strip().lower()
+    if (
+        head_result.returncode != 0
+        or SOURCE_COMMIT_RE.fullmatch(
+            head.decode("ascii", errors="ignore")
+        )
+        is None
+    ):
+        raise CompatibilityError(
+            "writer_head_missing",
+            "write requires a valid Git HEAD commit containing the current "
+            "AgentDesk project lock",
+        )
+    head_text = head.decode("ascii")
+
+    tree_result = _run_git_probe(
+        project,
+        ("ls-tree", "-z", head_text, "--", lock_path),
+        f"{lock_path} at project HEAD",
+    )
+    if tree_result.returncode != 0:
+        detail = (
+            tree_result.stderr.decode("utf-8", errors="replace").strip()
+            or tree_result.stdout.decode("utf-8", errors="replace").strip()
+            or "unknown Git error"
+        )
+        raise CompatibilityError(
+            "writer_git_inspection_failed",
+            f"cannot inspect {lock_path} at project HEAD: {detail}",
+        )
+    entries = [entry for entry in tree_result.stdout.split(b"\0") if entry]
+    if not entries:
+        raise CompatibilityError(
+            "writer_lock_missing_from_head",
+            f"write requires project HEAD to contain {lock_path} as one "
+            "ordinary Git blob",
+        )
+    if len(entries) != 1 or b"\t" not in entries[0]:
+        raise CompatibilityError(
+            "writer_lock_not_blob",
+            f"write requires project HEAD to contain {lock_path} as one "
+            "ordinary Git blob",
+        )
+    metadata, returned_path = entries[0].split(b"\t", 1)
+    parts = metadata.split()
+    if (
+        len(parts) != 3
+        or parts[0] not in {b"100644", b"100755"}
+        or parts[1] != b"blob"
+        or returned_path != lock_path.encode("utf-8")
+    ):
+        raise CompatibilityError(
+            "writer_lock_not_blob",
+            f"write requires project HEAD to contain {lock_path} as one "
+            "ordinary Git blob",
+        )
+
+    blob_id = parts[2].decode("ascii", errors="strict")
+    blob_result = _run_git_probe(
+        project,
+        ("cat-file", "blob", blob_id),
+        f"{lock_path} blob at project HEAD",
+    )
+    if blob_result.returncode != 0:
+        detail = (
+            blob_result.stderr.decode("utf-8", errors="replace").strip()
+            or blob_result.stdout.decode("utf-8", errors="replace").strip()
+            or "unknown Git error"
+        )
+        raise CompatibilityError(
+            "writer_git_inspection_failed",
+            f"cannot read {lock_path} blob at project HEAD: {detail}",
+        )
+    if blob_result.stdout != current_lock_bytes:
+        raise CompatibilityError(
+            "writer_lock_bytes_mismatch",
+            f"write requires the raw bytes of {lock_path} in project HEAD "
+            "to exactly match the worktree file",
+        )
+
+    try:
+        final_lock_bytes = _read_project_regular_file(
+            project, LOCK_FILE, "project lock"
+        )
+    except CompatibilityError as exc:
+        raise CompatibilityError(
+            "writer_lock_read_failed",
+            f"cannot re-read worktree project lock after Writer "
+            f"verification: {exc.message}",
+        ) from exc
+    if final_lock_bytes != current_lock_bytes:
+        raise CompatibilityError(
+            "writer_lock_changed",
+            "worktree project lock changed while Writer authorization was "
+            "being verified; retry from a stable checkout",
+        )
+
+    final_head_result = _run_git_probe(
+        project,
+        ("rev-parse", "--verify", "HEAD^{commit}"),
+        "project HEAD after lock verification",
+    )
+    if (
+        final_head_result.returncode != 0
+        or final_head_result.stdout.strip().lower() != head
+    ):
+        raise CompatibilityError(
+            "writer_head_changed",
+            "project HEAD changed while verifying the committed AgentDesk "
+            "project lock; retry from a stable checkout",
+        )
+    return {"head": head_text, "blob": blob_id}
+
+
+def _verify_clean_worktree(project: Path) -> None:
+    status = _run_git_probe(
+        project,
+        ("status", "--porcelain=v1", "--untracked-files=all"),
+        "project worktree cleanliness",
+    )
+    if status.returncode != 0:
+        detail = (
+            status.stderr.decode("utf-8", errors="replace").strip()
+            or status.stdout.decode("utf-8", errors="replace").strip()
+            or "unknown Git error"
+        )
+        raise CompatibilityError(
+            "writer_git_inspection_failed",
+            f"cannot inspect project worktree cleanliness: {detail}",
+        )
+    if status.stdout:
+        raise CompatibilityError(
+            "writer_worktree_not_clean",
+            "this Writer verification requires a clean Git worktree with no "
+            "tracked or untracked adoption changes",
+        )
 
 
 def check_compatibility(
@@ -1077,6 +1481,7 @@ def check_compatibility(
     project: Path,
     operation: str,
     release_manifest_path: Path,
+    require_clean: bool = False,
 ) -> Dict[str, Any]:
     project = project.expanduser().absolute()
     release_manifest_path = release_manifest_path.expanduser().absolute()
@@ -1231,7 +1636,9 @@ def check_compatibility(
                         )
                     )
             else:
-                project_lock = _load_project_lock(lock_path, manifest)
+                project_lock, project_lock_bytes = _load_project_lock(
+                    project, manifest
+                )
                 differences = _identity_differences(project_lock, manifest)
                 project_identity_verified = (
                     project_lock.identity_declared
@@ -1310,20 +1717,31 @@ def check_compatibility(
                                 ),
                             )
                         )
-                    elif operation == "write" and active_attempts:
-                        try:
-                            current_lock_bytes = lock_path.read_bytes()
-                        except OSError as exc:
-                            raise CompatibilityError(
-                                "read_error",
-                                f"cannot read project lock bytes at "
-                                f"{lock_path}: {exc}",
-                            ) from exc
-                        _verify_active_attempt_locks(
-                            project,
-                            active_attempts,
-                            current_lock_bytes,
+                    elif operation == "migrate":
+                        _verify_mutating_git_boundary(
+                            project, require_repository=False
                         )
+                    elif operation == "write":
+                        committed_lock = _verify_writer_lock_at_head(
+                            project, project_lock_bytes
+                        )
+                        if active_attempts:
+                            _verify_active_attempt_locks(
+                                project,
+                                active_attempts,
+                                project_lock_bytes,
+                                committed_lock["head"],
+                            )
+                        lock_summary.update(
+                            {
+                                "committed_at_head": True,
+                                "head_commit": committed_lock["head"],
+                                "head_blob": committed_lock["blob"],
+                            }
+                        )
+                        if require_clean:
+                            _verify_clean_worktree(project)
+                            lock_summary["worktree_clean"] = True
         except CompatibilityError as exc:
             errors.append(_message(exc.code, exc.message))
 
@@ -1389,6 +1807,14 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--require-clean",
+        action="store_true",
+        help=(
+            "with --operation write, also require a clean tracked and "
+            "untracked worktree (for post-commit activation verification)"
+        ),
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="emit one JSON compatibility result",
@@ -1397,11 +1823,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.require_clean and args.operation != "write":
+        parser.error("--require-clean is valid only with --operation write")
     result = check_compatibility(
         project=Path(args.project),
         operation=args.operation,
         release_manifest_path=Path(args.release_manifest),
+        require_clean=args.require_clean,
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))

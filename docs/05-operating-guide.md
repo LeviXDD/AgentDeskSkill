@@ -44,7 +44,7 @@ Leader 将需求拆成最小可验收任务，并冻结：
 - Owner approval gate；
 - attempt 专属报告路径。
 
-任务卡和当时的 `ROLE-POLICIES.yaml` 必须同时存在于 `task_card_commit`。
+任务卡和当时的 `ROLE-POLICIES.yaml` 必须同时存在于 `task_card_commit`。该提交必须在当前 HEAD 的祖先链；派发提交产生后，还必须是首次 dispatch commit 的祖先，不能用 detached/orphan 提交充当冻结证据。
 
 ### 3. 验证岗位与运行时
 

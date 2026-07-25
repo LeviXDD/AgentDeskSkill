@@ -30,6 +30,25 @@ class BuildError(Exception):
     """Raised when a source tree cannot become a trustworthy release."""
 
 
+def _checker_environment() -> dict[str, str]:
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_") and not key.startswith("PYTHON")
+    }
+    environment.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+    )
+    return environment
+
+
 def _run_git(repository: Path, arguments: Sequence[str]) -> str:
     try:
         result = subprocess.run(
@@ -427,6 +446,7 @@ def _validate_packaged_manifest(skill_root: Path) -> None:
             result = subprocess.run(
                 [
                     sys.executable,
+                    "-I",
                     str(checker),
                     "--project",
                     temp,
@@ -439,6 +459,7 @@ def _validate_packaged_manifest(skill_root: Path) -> None:
                 stderr=subprocess.PIPE,
                 text=True,
                 timeout=30,
+                env=_checker_environment(),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise BuildError(f"cannot validate packaged release: {exc}") from exc
