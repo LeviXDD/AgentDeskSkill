@@ -1,401 +1,108 @@
 ---
 name: agentdesk
-description: "Initialize, consult on, operate, validate, and recover task-card-driven multi-agent software projects. Use when Codex needs a bounded multi-session roundtable for a complex topic, product, architecture, risk, or requirements question—including a topic outside a repository—or needs to scaffold or upgrade a repository for PM-coordinated delivery with independently named role tasks, model policies, task cards, dedicated worktrees, proactive callbacks, acceptance, integration gates, and repository/runtime validation."
+description: "管理以任务卡驱动的多 Agent 软件项目，支持初始化、PM/Worker 协作交付、校验和恢复；也适用于围绕复杂决策开展有明确边界的只读多会话咨询，包括仓库之外的话题。"
 ---
 
 # AgentDesk
 
-## Outcome
-
-Turn a software repository into a controlled multi-session development system:
-
-> Versioned task cards, PM-owned canonical state, real independently visible role tasks, role-bound execution, proactive callbacks, immutable Git evidence, explicit acceptance, and recoverable handoff.
-
-The observable loop is non-negotiable:
-
-```text
-PM/Leader task
-→ verified independent role task named `role_no . role_name`
-→ real dispatch delivery
-→ dedicated worktree execution and durable report
-→ worker proactively messages the PM/Leader source task
-→ PM independently accepts and integrates
-→ dependencies unlock
-→ heartbeat reconciles only if the primary callback path fails
-```
-
-Repository records make this loop recoverable; they do not substitute for creating, addressing, or messaging the real tasks.
+组织可验证的软件交付：冻结任务卡、限定执行范围、持久化证据、由 PM 验收，再集成到指定基线。Standard / Automated 还要求真实独立的岗位任务、实际派发，以及带回执的主动回调。只有仓库记录，不能证明运行时闭环成立。
 
-When a question needs competing viewpoints before execution, AgentDesk can prepend a bounded consultation loop: one Leader opens one to three read-only consultation tasks, collects independent first-round callbacks, optionally runs one cross-check round, synthesizes disagreements, and asks the Owner to confirm what—if anything—becomes a decision or task card. Consultation is advisory and never substitutes for the execution loop above.
+本入口负责指引操作，不替代或放宽 V2 协议。脚本、Schema、审批规则和模式保证仍是执行依据。产品决策和外部副作用必须通过各自的门禁。
 
-Automate coordination, not authority. Keep product decisions, risky approvals, merging, and release behind their declared gates.
+## 选择当前操作
 
-## Resolve The Requested Mode
+根据用户请求和项目现有接入级别选择操作。不要仅因为调用了本 Skill，就初始化、迁移、创建岗位或开启咨询。
 
-Choose the primary mode from the request and repository state. `Consultation` may precede `PM`, but its output does not silently enter execution:
+| 操作 | 从这里开始 |
+| --- | --- |
+| 初始化 / 接入 / 迁移 | 写入前阅读[初始化与接入](references/initialization-and-adoption.md)及适用的[版本管理流程](references/versioning-and-upgrades.md)。 |
+| PM | 使用下方 PM 流程，只加载当前准备、派发、审查或集成所需的材料。 |
+| Worker | 使用下方 Worker 流程，遵守所分配任务卡及其上下文预算。 |
+| QA / 集成 | 使用专属任务卡，阅读[运行手册](references/runbooks-and-recovery.md)第 7 或第 8 节。 |
+| 咨询 | 使用下方咨询流程；咨询不授予执行权限。 |
+| 校验 | 使用下方只读校验流程。 |
+| 恢复 | 保全证据，使用下方对应的恢复流程。 |
 
-1. **Initialize** — scaffold or upgrade a project workflow.
-2. **Consultation** — open zero to three bounded, read-only advisory tasks around one topic, collect their callbacks, synthesize, and request Owner confirmation.
-3. **PM** — clarify requirements, configure roles, create and dispatch cards, review deliveries, update state, and unlock dependencies.
-4. **Worker** — implement one assigned card inside its scope and produce a delivery report.
-5. **QA / Integration** — test a frozen candidate or combine accepted commits under a dedicated card.
-6. **Validate** — check project structure and state without changing business code.
-7. **Recover** — reconcile conflicting state, lost callbacks, stale revisions, expired leases, or invisible Git evidence.
+新项目仍默认使用 `standard`，除非规模明确适合 `lite`；Standard 尚未成功运行前，不选择 `automated`。已有项目保持当前模式和锁定版本。Lite 只允许其文档定义的手工流程，包括明确授权的同任务角色切换；不能因此省略任务卡、证据、worktree 隔离或验收规则。
 
-Do not silently combine PM and worker authority. In `standard` and `automated`, a worker must run in a real task distinct from the PM/Leader task. Never satisfy this requirement by changing personas in the PM task, by creating only a worktree, or by recording a placeholder thread ID.
+## 按需加载上下文
 
-Creating a Codex task makes a new user-visible task. If no verified role task exists, require explicit user authorization to create that visible task. A general request such as “start development” or “use this Skill” is not that authorization. Keep the card at `Ready`, explain which `role_no . role_name` task(s) will be created, and ask. Do not silently fall back to a same-task role switch. Lite may use an explicitly authorized manual baton or same-task role switch, but must label that run Lite and must not claim the multi-task closed loop.
+在仓库内执行任务时，先读 `AGENTS.md`、已分配的任务卡及其必读上下文。PM 还需读取相关权威状态、活动交付、阻塞和决策。仅为解决具体问题读取按需材料；默认不加载无关模块或历史报告。只读建议或非仓库话题的咨询不需要新建执行任务卡或项目骨架。
 
-## Load References Progressively
-
-Read only what the active mode requires:
+通过下表定位适用章节，并在操作前完整阅读这些章节，包括前置条件和引用的门禁。章节索引不能代替实际要求。
 
-- Read [references/protocol.md](references/protocol.md) before changing task state, dependencies, dispatch IDs, leases, acceptance, integration, or concurrency guards.
-- Read [references/schemas-and-templates.md](references/schemas-and-templates.md) before creating or editing `tasks.yaml`, a task card, delivery report, or acceptance record.
-- Read [references/events-outbox-and-validation.md](references/events-outbox-and-validation.md) before creating or editing an event, outbox message, runtime route, callback, or validator rule.
-- Read [references/runbooks-and-recovery.md](references/runbooks-and-recovery.md) for PM/worker/QA/integration procedures, risk approvals, heartbeat, migration, or any failure recovery.
-- Read [references/codex-runtime-adapter.md](references/codex-runtime-adapter.md) before creating, renaming, verifying, dispatching to, or calling back a Codex task. Follow its low-freedom tool order and receipt rules exactly.
-- Read [references/consultation-protocol.md](references/consultation-protocol.md) before proposing, authorizing, creating, messaging, synthesizing, validating, or recovering consultation tasks. Use its separate advisory identities, records, runtime receipts, and confirmation gate; do not reuse Worker dispatch semantics.
-- Read [references/versioning-and-upgrades.md](references/versioning-and-upgrades.md) before initializing an existing AgentDesk project, changing its lock, switching Skill releases, migrating schemas, or recovering work that may span versions.
-
-Do not load all references by default. The repository and current task card remain the primary task-local context.
-
-## Non-Negotiable Invariants
-
-- Treat `docs/pm/state/tasks.yaml` as the only authority for current **execution-task** orchestration state.
-- Treat the immutable bundle `release-manifest.json` and committed `docs/pm/AGENTDESK.lock.json` as the joint version authority. `read`/`validate` compatibility never grants Writer authority.
-- Before any project write, dispatch, callback ingestion, acceptance, recovery mutation, or project-backed consultation mutation, require `check_compatibility.py --operation write` to pass. Unknown or missing locks, unverified bundle digests, exact-release mismatches, a missing committed lock blob, or worktree/HEAD lock-byte drift fail closed.
-- Never auto-create a lock for `legacy-unpinned` projects, never edit a lock to bypass the gate, and never let an active attempt cross a lock or Skill release change.
-- Treat a versioned task card as the only authority for that revision's work specification.
-- Let only the current logical PM lease holder modify control-plane state.
-- Let roles modify business paths plus their exact assigned `report_path`; keep other control-plane files read-only.
-- Bind every dispatch to `task_id + revision + attempt + dispatch_id + base_commit`.
-- Use separate namespaces for state `event_id`, outbound `message_id`, and role `callback_id`.
-- Review immutable commits, never a moving branch name.
-- Keep `Accepted` separate from `Integrated`; default dependencies require `Integrated`.
-- Persist PM acceptance in the repository; do not treat chat, callbacks, or self-reported tests as acceptance.
-- Keep thread IDs, local worktree paths, cursors, tokens, and timed lease details under gitignored `.agentdesk/runtime/`.
-- Let the Project Leader own vendor-neutral role policy in `docs/pm/ROLE-POLICIES.yaml`; task and risk requirements may raise its floor, never lower it.
-- Give every Active role one stable `role_no`, `role_id`, and `role_name`; require the real task title to equal `<role_no> . <role_name>` byte-for-byte.
-- In Standard and Automated, bind every active dispatch to a verified, independently visible role task and dedicated worktree. A route is usable only when the real thread exists, its actual title matches the expected title, its host/worktree are reachable, and the PM callback route is independently verified.
-- Treat explicit authorization for creating a new user-visible task as a precondition, not something implied by project initialization or development approval.
-- Keep consultation records under `docs/pm/consultations/CNNN/` and consultation runtime facts under gitignored `.agentdesk/runtime/consultations.yaml`; never insert consultation seats into `tasks.yaml`, Active roles, Worker routes, or execution receipts.
-- Limit a consultation to one topic, one to three read-only seats, an independent first round, and at most one cross-check round. Seats cannot modify code/control-plane state, exercise PM/acceptance authority, contact each other directly, or create more tasks.
-- Require topic-bounded authorization before creating visible consultation tasks, exact titles in the form `<consultation_id>.<seat_no> . <seat_name>｜<short_topic>`, verified task identity, and proactive callbacks to the Leader source task.
-- Treat consultation output as advice. Only an explicit Owner confirmation may produce a durable decision or candidate task card, and that confirmation never implies authorization to create execution tasks, implement, merge, deploy, or release.
-- Require the worker to proactively callback the delegation `source_thread_id`, cross-check it against the verified PM route, and persist a transport receipt before claiming its task lifecycle complete. Heartbeat is only the fallback for a failed or lost primary callback.
-- Freeze role policy at `task_card_commit`; freeze the selected provider/model snapshot in dispatch and delivery evidence.
-- Treat model selection as a dispatch guard, not a model launcher. If the runtime cannot honor the exact selected binding and deliberation tier, do not dispatch.
-- Trace every active or delivered dispatch to the unique `TASK_DISPATCHED` event and `task.dispatch` outbox added by the same commit that first added that dispatch to canonical state; keep all nine model-selection fields identical across ledger, outbox, and report evidence.
-- For `require_pm_approval` degradation, require a matching `MODEL_DEGRADATION_APPROVED` event committed with or before dispatch and not expired or independently revoked at dispatch time; never edit the approval event, and never treat an approval ID alone as evidence.
-- Never treat a stronger model as authority, approval, capability permission, or permission to bypass a safety gate.
-- Never claim Standard/Automated dispatch, callback, or closed-loop operation when the required runtime adapter, thread tools, route verification, or transport receipts are unavailable. Downgrade explicitly to Lite or stop at the relevant gate.
-
-## Initialize Or Explicitly Migrate A Project
-
-Use one lifecycle vocabulary for both new initialization and legacy adoption:
-`plan` is zero-write review; `prepared` is an uncommitted scoped snapshot;
-`committed` means the Owner-authorized snapshot is present in Git but is not
-yet operational; `durable` means the same immutable bundle has verified commit
-scope where available, a clean exact Writer lock, generated views, and strict
-project validity. A zero exit from an initializer or adopter never skips the
-remaining states.
-
-### 1. Inspect Before Writing
-
-Read the repository root, `AGENTS.md`, build/test configuration, existing `docs/pm/`, current Git branch/status, and any equivalent project-management files.
-
-Reuse equivalent files. Do not create a parallel workflow beside an established one. Preserve unrelated or user-owned changes.
-
-Choose an adoption level:
-
-- `lite`: one PM and one or two roles; manual baton and manual dispatch; no claim of automatic multi-task closure.
-- `standard`: real independently visible PM/role tasks, exact role titles, dedicated worktrees, schema validation, explicit dependencies and integration gates, outbox/inbox, proactive cross-task callbacks with receipts, and heartbeat reconciliation.
-- `automated`: all Standard guarantees plus timed lease renewal, automatic receipt/ack retry and dead-letter handling, orphan detection, stronger sandboxing, metrics, and recovery automation.
-
-Start new projects at `standard` unless their size clearly calls for `lite`. Do not select `automated` before Standard has run successfully.
-
-### 2. Run The Idempotent Initializer
-
-Resolve the skill directory from this `SKILL.md`, then run:
-
-```bash
-python3 -I <skill-dir>/scripts/init_project.py --project <repo> --mode standard --dry-run
-python3 -I <skill-dir>/scripts/init_project.py --project <repo> --mode standard
-```
-
-The initializer is not an upgrader. If existing AgentDesk markers have no `docs/pm/AGENTDESK.lock.json`, both dry-run and real initialization stop non-zero without changing files; use the explicit migration procedure in [references/versioning-and-upgrades.md](references/versioning-and-upgrades.md). If a lock exists, only the exact same bundle may resume an interrupted or idempotent initialization.
-
-An unverified `development` manifest may be initialized only in a disposable test project with the explicit `--allow-development-release` flag. That flag never authorizes PM/Worker writes, dispatch, migration, or production adoption.
-
-For a real `legacy-unpinned` repository, first freeze dispatch and run the
-dedicated adoption planner from the exact immutable Stable bundle:
-
-```bash
-python3 -I <skill-dir>/scripts/adopt_legacy_project.py --project <repo> --dry-run
-```
-
-The planner is zero-write. Apply only after reviewing its stable release
-identity, clean Git baseline, project ID, marker inventory, and no-active-attempt
-result. Confirm that the plan contains, in order, exclusive lock creation,
-missing-template initialization, generated-view rendering, view `--check`, and
-pre-commit validation. Apply only with explicit Owner approval:
+| 执行以下操作前 | 必读参考 |
+| --- | --- |
+| 修改状态、依赖、租约、派发、验收或集成 | [核心协议](references/protocol.md)：第 2、15 节，以及涉及的状态、身份、模型、并发、派发或交付章节。 |
+| 创建或编辑账本、任务卡、报告或验收记录 | [Schema 与模板](references/schemas-and-templates.md)：第 1 节和对应对象的章节，使用现有资产模板。 |
+| 写入事件、outbox、路由、回执或回调 | [事件与校验](references/events-outbox-and-validation.md)：第 7–9 节的对应格式，以及第 10–11 节适用的顺序和不变量。 |
+| 执行岗位流程或判断审批要求 | [运行手册](references/runbooks-and-recovery.md)：第 1–2 节、对应岗位流程和 DoR/DoD；风险门禁见第 9 节，派发或验收前阅读第 15 节。 |
+| 创建、核验、向 Codex 任务发消息或回调 | [运行时适配器](references/codex-runtime-adapter.md)：强制边界、对应操作及其回执和合规要求。严格保持工具调用顺序。 |
+| 开启或管理实际咨询 | [咨询协议](references/consultation-protocol.md)；涉及真实任务时，还需阅读运行时适配器的咨询流程。 |
+| 初始化、修改锁文件/版本/Schema，或跨版本恢复 | [版本管理](references/versioning-and-upgrades.md)；初始化或接入时，还需阅读上方专门流程。 |
 
-```bash
-python3 -I <skill-dir>/scripts/adopt_legacy_project.py \
-  --project <repo> \
-  --apply \
-  --acknowledge-legacy-unpinned \
-  --json
-```
+同一 Skill 包的静态规则已在当前上下文中时，直接复用，不要每轮机械重读。上下文丢失后，重新加载适用规则。这不代表缓存实时事实：协议要求时，仍需重读已变化的任务卡、状态、锁、路由、回执和审批。不能用之前的一次通过代替当前门禁。
 
-This command exclusively creates the first lock, invokes the same bundle's
-initializer to fill missing templates without overwriting existing files,
-regenerates the derived views, checks them, and runs pre-commit validation.
-Preserve user-owned files and existing protocol records; only missing templates
-may be added, while `BOARD.md`, `STATUS.md`, and `CONSULTATIONS.md` are
-deterministic generated views and may be rebuilt from their canonical sources.
-The adopter continuously fences HEAD, canonical state, the Git index, and an
-explicit path allowlist. It launches bundled Python children in isolated mode,
-so caller-controlled `PYTHONPATH` code cannot join the migration.
-
-Treat a successful apply as `prepared`, not complete. Inspect the scoped diff,
-then let the user authorize and create one migration commit containing the
-lock, missing templates, and regenerated views. Before that commit, ordinary
-Writers must remain blocked because the lock is not yet present in `HEAD`; only
-the emitted fenced `resume-after-lock` command may continue an incomplete
-preparation. After that commit, run the exact `post_commit_verification`
-command emitted by the same immutable bundle:
-
-```bash
-python3 -I <skill-dir>/scripts/adopt_legacy_project.py \
-  --project <repo> \
-  --verify-prepared \
-  --expected-head <payload.project_head> \
-  --expected-state-sha256 <payload.state_sha256> \
-  --json
-```
-
-This verifier requires exactly one non-merge adoption commit rooted at the
-recorded baseline, rejects changed paths outside the original allowlist or
-missing required paths, requires a clean worktree, and then runs the exact
-Writer, generated-view, and strict validation gates. Call the adoption durable
-only when it returns `status: durable`. Until then, keep dispatch and business
-writers frozen. If the
-session is not authorized to commit, stop at `prepared` and report the pending
-review, commit, and post-commit verification.
-
-If any step fails after the lock is created, preserve the lock and treat the
-result as incomplete. Execute only the emitted payload's single fenced
-`recovery.command` with the same bundle; it re-enters
-`adopt_legacy_project.py --resume-after-lock` and revalidates the original
-HEAD, state digest, lock, index, and path allowlist before running child tools.
-Do not run those child tools directly, and do not delete, recreate, or hand-edit
-the lock. This is a controlled first-version
-adoption, not proof of the historical Skill identity and not a general
-cross-version Schema migrator.
-
-Add `--project-id` and `--pm-holder-id` when the defaults are ambiguous.
-
-For a user-requested new project in an empty directory, add `--init-git` to both commands. Do not create a nested repository inside an existing worktree; use the actual repository root. For an existing non-Git directory, stop and obtain confirmation before introducing version control.
-
-Versioned control-plane paths must remain trackable. If effective Git ignore rules cover `AGENTS.md`, `docs/pm/**`, or future task/report/acceptance/event/outbox/consultation evidence, stop and correct those rules before initialization or adoption; only `.agentdesk/runtime/` is intentionally ignored.
-
-Before creating the first Ready task card, ensure the repository has a real baseline commit. Do not fabricate author identity or commit unrelated existing changes merely to remove the validator warning.
-
-The initializer must not overwrite existing files. If it reports `MANUAL_MERGE`, inspect and merge only the required protocol section with `apply_patch`.
-
-### 3. Configure Project-Specific Truth
-
-After scaffolding:
-
-1. Fill the stable project summary, repository map, commands, safety rules, and report rule in `AGENTS.md`.
-2. Configure only the roles the project needs in `docs/pm/ROLES.md`; every Active role must have a stable unique `role_no`, a stable unique `role_id`, and a non-empty `role_name`. Record the derived `expected_thread_title`, which must equal exactly `<role_no> . <role_name>`.
-3. Have the Project Leader configure each Active role's vendor-neutral model tier, deliberation tier, capability, and degradation policy in `docs/pm/ROLE-POLICIES.yaml`.
-4. Bind locally available provider models in gitignored `.agentdesk/runtime/model-bindings.yaml`; treat its tier/capability labels as a trusted runtime attestation. If the local operator is outside the Leader's trust boundary, require a Leader-approved model registry or decision reference before enforced routing. Never put credentials, tokens, or session IDs in repository evidence.
-5. Register trusted check IDs and argv arrays in `docs/pm/CHECKS.yaml`.
-6. Record durable decisions in `DECISIONS.md`; do not use it as a status log.
-7. Keep `tasks.yaml` empty until requirements and the first task card are concrete.
-8. If consultations are enabled, review `docs/pm/CONSULTATION-POLICY.yaml`; keep its V1 caps at no more than three seats and two rounds, with read-only seats, no recursive task creation, and Owner confirmation required before derivation.
-
-Never dispatch to an unconfirmed role or invent production credentials, external approvals, or release authority.
-
-Before the first Standard/Automated dispatch, create or rebuild gitignored `.agentdesk/runtime/routes.yaml` using `agentdesk.routes/v2` and `.agentdesk/runtime/transport-receipts.yaml` using `agentdesk.transport-receipts/v1`. Runtime loss does not change repository truth, but it blocks dispatch until the PM route, worker route, exact actual title, host, and worktree have been rediscovered and marked `verified`.
-
-After binding or refreshing a role route, run the live pre-dispatch guard:
-
-```bash
-python3 -I <skill-dir>/scripts/validate_runtime.py --project <repo> --role-id <role-id>
-```
-
-Repository strict validation and runtime validation are separate gates; both must pass for Standard / Automated dispatch.
-
-Before every dispatch, run the deterministic selector and use its JSON object without renaming or editing fields:
-
-```bash
-python3 -I <skill-dir>/scripts/select_model.py --project <repo> --task-card-commit <40-char-sha> --role-id <role-id> --risk <L0-L4> --task-min-tier <inherit|basic|standard|advanced|expert> [--required-capability <capability> ...] [--degradation-approval-id <approval-id>]
-```
-
-Copy that exact nine-field snapshot to `current_dispatch.model_selection`, outbox `model_selection`, and later the report's `executor_model`. If `require_pm_approval` permits a degraded selection, first allocate the scoped approval and persist its structured event no later than the dispatch commit. If selection or approval fails, keep the task Ready or Blocked; never hand-compute a substitute.
-
-For dispatch, `--task-card-commit` is mandatory at the workflow level: it makes the selector read the role policy frozen in the same commit as the card. Omit it only for a pre-card configuration check against the current worktree policy.
-
-The bundled selector and validator do not start a provider model or create/message Codex tasks. The dispatcher/runtime adapter must prove it can honor the selected provider, stable model revision, deliberation tier, capabilities, real task identity, and transport receipt before sending the outbox message. `executor_model` is an attestation, not independent provider proof. A runtime that cannot select the requested model or emit trustworthy execution and message receipts may use this feature only as an audit policy, not as an enforced routing or closed-loop claim.
-
-### 4. Render, Preflight, Commit, And Validate
-
-```bash
-python3 -I <skill-dir>/scripts/check_compatibility.py --project <repo> --operation write
-python3 -I <skill-dir>/scripts/render_views.py --project <repo>
-python3 -I <skill-dir>/scripts/validate_project.py --project <repo> --pre-commit
-python3 -I <skill-dir>/scripts/render_views.py --project <repo> --check
-# inspect and commit the scoped workflow snapshot
-python3 -I <skill-dir>/scripts/check_compatibility.py --project <repo> --operation write --require-clean
-python3 -I <skill-dir>/scripts/validate_project.py --project <repo>
-python3 -I <skill-dir>/scripts/render_views.py --project <repo> --check
-```
-
-For a brand-new initialization or approved adoption whose exact lock is not yet
-committed, the first three preparation commands instead use the explicit
-bootstrap/migration path:
-
-```bash
-python3 -I <skill-dir>/scripts/render_views.py --project <repo> --migration-prepare
-python3 -I <skill-dir>/scripts/render_views.py --project <repo> --check
-python3 -I <skill-dir>/scripts/validate_project.py \
-  --project <repo> \
-  --pre-commit \
-  --migration-prepare
-# inspect and commit only the scoped initialization or migration snapshot
-python3 -I <skill-dir>/scripts/check_compatibility.py --project <repo> --operation write --require-clean
-python3 -I <skill-dir>/scripts/render_views.py --project <repo> --check
-python3 -I <skill-dir>/scripts/validate_project.py --project <repo>
-```
-
-When `init_project.py` prints `POST_COMMIT_COMMAND` for a repository that had
-a baseline `HEAD`, execute that exact command instead of treating the three
-standalone post-commit checks as sufficient. It reuses
-`--verify-prepared` to prove the initialization is exactly one scoped commit
-from that baseline, then runs those checks. A newly created repository with no
-baseline cannot make that parent-commit proof; review its root commit as the
-whole repository and still require the clean Writer, view, and strict gates.
-
-When `CONSULTATION-POLICY.yaml` or consultation records are present, also run `python3 -I <skill-dir>/scripts/validate_consultations.py --project <repo>`. This validates the advisory record and artifacts; it does not replace live task/title/transport verification.
-
-Ordinary `--pre-commit` requires Writer compatibility. The additional
-`--migration-prepare` flag switches only an explicitly approved initialization
-or migration snapshot to the `migrate` gate; it is not valid for routine task
-writes. Both modes warn because they cannot prove commit atomicity while
-control-plane files differ from `HEAD`. After preparation passes, inspect the
-diff and commit only the scoped workflow files; never sweep unrelated existing
-changes into the commit. Final strict validation omits `--pre-commit`,
-`--migration-prepare`, and `--allow-legacy-model-evidence`, and proves canonical
-state, generated views, acceptance records, and dispatch event/outbox evidence
-match committed Git history. A final validation exit code does not replace the
-separate exact Writer gate. If the session is not authorized to commit an
-existing repository, stop with final strict validation pending rather than
-claiming initialization is complete.
-
-`render_views.py` also enforces the gate internally: write mode must use the
-manifest beside the executing immutable renderer, while `--release-manifest`
-is accepted only together with read-only `--check`. Never use an external
-manifest to lend Writer authority to scripts from another checkout.
-
-`--allow-legacy-model-evidence` is only a migration-audit escape hatch for legacy terminal records. Its warnings are never a strict pass and must never drive automatic acceptance or dispatch.
-
-Do not claim initialization is complete while final strict validation reports errors.
-
-The bundled validator reconciles ledger state with committed event/outbox evidence, including ID uniqueness, first-dispatch commit atomicity, raw outbox digest, model snapshot parity, and degradation approval linkage. It does not prove a provider execution receipt, the completeness of dispatch guards, the semantic safety of `CHECKS.yaml`, or the actual implementation diff/path scope; use the full Validator / CI checklist in [references/runbooks-and-recovery.md](references/runbooks-and-recovery.md) before dispatch or acceptance.
-
-## Consultation Workflow
-
-Use this workflow only for decision support. Read [the consultation protocol](references/consultation-protocol.md) before acting.
-
-1. Frame one decision topic, its Owner, known facts, constraints, non-goals, and what evidence could change the conclusion. If the Leader can answer reliably without another perspective, use zero seats and continue in the current task without creating a consultation record. If the user explicitly requests independent or multi-session perspectives, do not silently collapse that request to zero seats: propose the smallest meaningful panel and stop at the visible-task authorization gate.
-2. Size the roundtable: one seat for a single specialist gap, two for a genuine alternative or trade-off, and three only for material cross-domain or high-impact disagreement. V1 never creates more than three seats or more than two rounds.
-3. Allocate a non-reused `C001`-style ID, derive `C001.01`-style seat IDs, and draft the shared brief from [assets/consultation-brief-template.md](assets/consultation-brief-template.md). In an AgentDesk project, record the plan with the safe pre-authorization defaults in [assets/consultation-record-template.yaml](assets/consultation-record-template.yaml): `state: awaiting_authorization`, null authorization, planned seats, and no rounds. After authorization, insert the real authorization ID, then freeze and digest the brief before sending. For a topic outside a project, use the protocol's conversation-only mode and do not claim Git-backed audit or recovery. Keep runtime task IDs out of Git.
-4. Before creating visible tasks, present the topic, seat count, exact titles, focus, round cap, access boundary, and model recommendation. Obtain authorization bounded to this consultation. A user's explicit instruction naming the exact batch is sufficient; a request to use AgentDesk, analyze deeply, initialize, or develop is not standing authorization.
-5. Create one real task per authorized seat, set and read back the exact title `<consultation_id>.<seat_no> . <seat_name>｜<short_topic>`, and verify that every seat and the Leader source are distinct and reachable. Consultation seats are read-only and do not need Worker worktrees. Persist task identities, title attestations, prompt receipts, and response receipts only in `.agentdesk/runtime/consultations.yaml`.
-6. Send every seat the same first-round brief digest plus only its declared focus. Do not expose another seat's response before all first-round callbacks are collected or marked missing/blocked. Each seat must proactively callback the Leader source task; a final answer left only in the seat task is not a callback.
-7. Open a second round only when a material disagreement could change the decision. Reuse the same seats, relay a neutral or anonymized disagreement summary through the Leader, and do not add seats, allow direct seat-to-seat messaging, or create a third round.
-8. Persist Round 1 responses with [assets/consultation-response-template.md](assets/consultation-response-template.md) and optional Round 2 responses with [assets/consultation-response-r2-template.md](assets/consultation-response-r2-template.md), then synthesize with [assets/consultation-synthesis-template.md](assets/consultation-synthesis-template.md). Separate consensus, conditional consensus, disagreement, minority views, assumptions, confidence, and unresolved Owner questions; never decide by vote count.
-9. Ask the Owner to confirm, reject, or defer the proposed outcome. Only a confirmed scope may be recorded in `DECISIONS.md` or used to draft a task card. A derived decision row must cite the consultation and confirmation IDs; a derived task card must carry `source_consultation_id` plus `source_confirmation_id` and be listed in the consultation's `derived_refs`. Creating execution-role tasks, implementing, accepting, merging, deploying, and releasing remain separately gated actions.
-10. In a project-backed consultation, render and validate the advisory control plane when present:
-
-   ```bash
-   python3 -I <skill-dir>/scripts/render_views.py --project <repo>
-   python3 -I <skill-dir>/scripts/validate_consultations.py --project <repo>
-   ```
-
-   The default command validates the public consultation lifecycle and artifacts. Once any visible seat has actually been created, also run `validate_consultations.py --project <repo> --require-runtime`, then read/list the current provider tasks to re-verify the Leader route, distinct seat routes, exact titles, and callback delivery. Neither stored runtime evidence nor a passing validator replaces that live check.
-
-Consultation model requirements are vendor-neutral recommendations. Do not run the execution `select_model.py` for a consultation seat. Pass an exact runtime model override only when the user explicitly requests that exact model and the active host supports it; otherwise omit the override and disclose the runtime/default binding as unverified when it cannot be observed. Model strength never expands seat authority.
-
-## PM Workflow
-
-1. Run `check_compatibility.py --operation write`; stop on `legacy-unpinned`, digest failure, mismatch, or an active attempt frozen to another lock. Then acquire or confirm the logical PM lease and current `lease_epoch`.
-2. Read canonical state, the relevant task card, latest decisions, active deliveries, and blockers.
-3. Clarify the next observable outcome and choose the smallest role set.
-4. Create a versioned card from [assets/task-card-template.md](assets/task-card-template.md).
-5. Validate Definition of Ready: role identity (`role_no`, `role_id`, `role_name`), frozen role policy, effective model tier/deliberation/capabilities, dependencies, immutable base, paths, checks, risk, approval gate, and context budget.
-6. Before writing `TASK_DISPATCHED`, verify the real PM task, the distinct real role task, exact expected/actual title, callback destination, dedicated worktree/host, and single-flight capacity. If a new visible task is needed and explicit user authorization is absent, stop at `Ready` and ask. For Codex, execute [the runtime adapter](references/codex-runtime-adapter.md): `list_projects` → `create_thread` → `set_thread_title` → `read_thread`/`list_threads` verification, then require `validate_runtime.py --project <repo> --role-id <role-id>` to pass. Placeholder/local labels are not routes.
-7. Allocate the attempt and IDs, prove the full `task_card_commit` is an ancestor of current HEAD, run `select_model.py` with that commit, and, when required, create a matching `MODEL_DEGRADATION_APPROVED` event. Copy the selector's nine fields exactly into ledger and outbox. Strict validation must also prove the card commit is an ancestor of the first dispatch commit.
-8. Finalize the immutable outbox, hash its repository UTF-8/LF bytes into the `TASK_DISPATCHED.payload_digest`, render views, and run pre-commit structural validation. Commit the first appearance of `current_dispatch`, dispatch event, outbox, snapshot, views, and any same-commit approval together; then run strict validation.
-9. Send the immutable dispatch to the verified role `thread_id` with `send_message_to_thread`, include the runtime-only PM `source_thread_id`, and persist the provider result in `transport-receipts.yaml`. Verify visibility or obtain a matching ack before recording `InProgress`, then run `validate_runtime.py --project <repo> --role-id <role-id> --check-active`. Retries reuse the same IDs, payload, destination, and snapshot.
-10. On callback, dedupe by `callback_id`, verify its receipt and source/destination routes, then inspect the report commit, implementation commit, exact diff, source, checks, deviations, and contract changes.
-11. Create an immutable acceptance record from [assets/acceptance-template.md](assets/acceptance-template.md).
-12. Mark a code task `Integrated` only after the target baseline contains the accepted change by ancestry or recorded equivalence.
-13. Run strict validation and view `--check` after the control-plane commit.
-
-Do not auto-merge, publish, deploy, send external messages, use production credentials, or perform irreversible migrations without the separately required authorization.
-
-## Worker Workflow
-
-1. Run `check_compatibility.py --operation write`, then read `AGENTS.md`, the assigned card, and only its required context. If the current lock differs from the lock in `task_card_commit`, stop without changing code or report state.
-2. Verify `task_id`, `revision`, `attempt`, `dispatch_id`, `task_card_commit`, `base_commit`, role, worktree, paths, report path, and the frozen `model_selection`.
-3. Stop and report stale or conflicting inputs; do not guess the latest task.
-4. Work in the dedicated branch/worktree and stay inside allowed scope.
-5. Use only trusted check IDs resolved through `CHECKS.yaml`.
-6. Commit implementation and tests first as `implementation_commit`.
-7. Create the attempt-specific report from [assets/delivery-report-template.md](assets/delivery-report-template.md), record the actual executor model snapshot, reference the implementation commit, then commit the report as `report_commit`.
-8. Publish both commits to a PM-readable ref or artifact before callback.
-9. Resolve the delegation's runtime-only `source_thread_id`, cross-check it against the `verified` PM route, send the callback with `send_message_to_thread`, and persist a matching entry under `callback_receipts`. A final answer inside the worker task is not a callback.
-10. Retry failed or unconfirmed transport with the same `callback_id`, payload, and destination; never create a second delivery fact merely to get attention. Do not claim the worker lifecycle complete until a matching `callback_receipts[callback_id]` has `status: received`. If transport remains unavailable, preserve the report/commits, report the callback failure locally, and leave reconciliation to PM/heartbeat without pretending delivery was notified.
-
-A worker's `completed` report means “ready for PM review,” not Accepted.
-
-## QA And Integration Workflow
-
-- Give QA its own card, frozen candidate commit, environment, test matrix, and report path.
-- Let QA recommend pass, return, or unknown; only PM records final acceptance.
-- Give integration its own card, target baseline, ordered accepted commits, conflict scope, and cross-module checks.
-- Record merge, cherry-pick, or rebase mappings. Require equivalence evidence when accepted commit ancestry is not preserved.
-
-## Validate Or Recover
-
-For read-only repository validation, run `check_compatibility.py --operation validate`, then `validate_project.py`, and inspect warnings/errors before proposing changes. `legacy-unpinned` and an unverified Candidate may remain readable but are not writable. An ordinary pass does not prove that real tasks exist, titles match, dispatch/callback messages were delivered, or receipts are genuine. For a Standard / Automated local closed-loop verdict, run both:
-
-```bash
-python3 -I <skill-dir>/scripts/validate_runtime.py --project <repo> --check-active
-python3 -I <skill-dir>/scripts/validate_project.py --project <repo> --require-runtime
-```
-
-Treat either failure as a failed closed-loop validation; do not substitute one pass for the other. See [references/codex-runtime-adapter.md](references/codex-runtime-adapter.md).
-
-For recovery:
-
-1. Freeze new dispatch and run the read-only compatibility check. Before any repair write, require the Writer gate; otherwise preserve evidence and use the locked old release or explicit migration path.
-2. Establish one valid PM lease holder and fencing epoch.
-3. Preserve branches, worktrees, reports, messages, and receipts.
-4. Reconcile canonical state against Git objects, task cards, reports, acceptance, outbox, and runtime routes.
-5. Deduplicate by revision, attempt, and the correct event/message/callback ID namespace.
-6. Repair only facts that can be proven; send uncertain cases to PM or Owner decision.
-7. Regenerate views, run pre-commit validation, commit the recovered snapshot, then run strict validation; independently re-verify runtime routes and receipts, and reopen dispatch only after both repository and runtime invariants hold.
-
-Read [references/runbooks-and-recovery.md](references/runbooks-and-recovery.md) before mutating a broken workflow. Heartbeat may reconcile and alert; it must not silently rerun implementation, accept code, merge, or publish.
-
-## Required Handoff
-
-Report the mode used, files created or changed, task/state IDs, branch and commits, commands run, validation result, deviations, blockers, and the next safe action. For Standard/Automated runtime work, also report the logical role/title, whether the real PM and role routes were verified, and the dispatch/callback receipt IDs without exposing credentials. For Consultation, report the consultation/seat IDs, exact titles, authorization scope, rounds completed, missing callbacks, synthesis path, Owner confirmation status, and any derived decision/task references without exposing runtime task IDs.
-
-For initialization, explicitly list existing files left untouched and any `MANUAL_MERGE` work. For worker delivery, provide both implementation and report commits. For PM acceptance, identify the exact reviewed commit and integration status.
+使用 `python3 -I <skill-dir>/scripts/<name>.py ...` 运行随包脚本；下文仅写脚本名时，均是此调用方式的简写。除非调试或修改脚本，不读取其实现。只有需要对应操作时才加载初始化、咨询、迁移或故障恢复细节。缺少前置条件时停在该门禁，不要预先加载全部参考文档。
+
+## 安全门禁
+
+- **版本依据：**项目写入、派发、回调入账、验收、恢复修改，以及项目内咨询记录修改前，必须通过锁定包的 `check_compatibility.py --operation write`。锁缺失、未提交或发生漂移，摘要校验失败，或精确版本不匹配，均阻止写入。Reader 兼容不授予 Writer 权限；不得借用其他包的 manifest，也不得切换活动 attempt 的版本。
+- **状态与范围：**`docs/pm/state/tasks.yaml` 是执行状态的唯一权威；只有有效 PM 租约持有人可写控制面。冻结任务卡定义工作范围。Worker 只能修改允许的业务路径和指定报告路径，不能修改任务卡、验收或其他控制面文件。
+- **身份与并发：**工作绑定 `task_id + revision + attempt + dispatch_id + base_commit` 及冻结的 `task_card_commit`。保持唯一有效 attempt 和要求的独立 worktree；输入过期或冲突时停止。
+- **真实运行时：**Standard / Automated 要求 PM/Worker 是彼此不同的真实任务，标题精确为 `<role_no> . <role_name>`，且主机、worktree、路由、容量和 PM 回调目标均已核验。切换人格、subagent、占位 ID 或仅创建 worktree 都不能满足此要求。
+- **创建授权：**新建用户可见任务，需要用户对指定岗位或有界批次明确授权。“开始开发”或“使用 AgentDesk”不构成该授权。只有完成要求的实时核验后才能复用已有岗位任务。缺少工具或授权时停止，或明确约定使用 Lite；不得静默降级。
+- **模型证据：**在 `task_card_commit` 冻结 Leader 制定的策略；运行 selector，保持账本、outbox、报告中的九字段快照完全一致，并遵守能力、等级、推理深度下限及降级审批。selector 不负责启动模型；实际执行声明需要运行时证据。更强的模型不增加权限，对实现或证据有实质贡献的 subagent 必须有独立声明的执行证据。
+- **传输与幂等：**事件、消息和回调 ID 使用不同命名空间。先提交派发意图，再发送；传输重试保持 ID、payload、目标和模型快照不变。发送回执不等于 Worker 接单确认。回调必须指向已核验的委派来源；只有匹配的已接收回执才能证明通知送达。
+- **交付与验收：**冻结实现与报告提交，并确保 PM 可读取两者。完成报告仅请求审查，不等于验收。PM 独立检查精确 diff、检查结果、风险和不可变证据；QA 不作最终验收。
+- **集成：**区分 `Accepted` 与 `Integrated`；默认只有通过祖先关系或已记录的等价性证据证明已验收改动进入下游基线，才能解锁依赖。
+- **隐私与权限：**线程 ID、worktree 绝对路径、游标、传输回执、定时租约和秘密信息只放在被 Git 忽略的运行时存储中，不进入公开证据。使用 `CHECKS.yaml` 中可信的检查 ID。开发批准不包含合并、外部消息、生产凭据、部署、发布或不可逆操作的授权。
+- **如实处理失败：**保留分支、报告和工件。不得编造回执、测试、审批或门禁通过记录。Heartbeat 只对账和告警，不能静默重跑实现、验收、合并或发布。
+
+## PM 日常流程
+
+1. 通过 Writer 门禁，确认 PM 租约及 epoch，读取相关状态和任务卡。接管时，先完成要求的对账再派发。
+2. 定义一个可观察的结果，采用最少必要岗位。范围、归属和验收条件允许时，将实现、配套测试和紧密相关的文档放在同一卡中。为独立结果、依赖、权限或冲突面拆卡，不为每项活动单独设岗。
+3. 使用[任务卡模板](assets/task-card-template.md)，完成 DoR 并冻结任务卡和策略。判断是否需要 QA 或集成工作前先读风险要求；专门的 QA/集成工作仍需独立任务卡。不得跳过必要的独立复核。
+4. 派发前按运行手册和适配器核验 PM/Worker 身份、精确标题、回调路由、worktree、容量和授权。必须通过 `validate_runtime.py --project <repo> --role-id <role-id>`。运行 `select_model.py`，提供完整的 `--task-card-commit`、岗位、风险、卡片的 `--task-min-tier` 和所需能力；原样保留其 JSON，不手工重算。降级需审批时，最晚在派发提交中创建范围匹配的批准事件。
+5. 创建不可变事件、outbox 及摘要。渲染视图、预检、审查限定范围的 diff，将首次派发状态与对应事件、outbox、视图及同提交审批一并提交。严格验证历史后才发送。持久化真实回执；只有匹配的接单确认或可验证的工作活动才允许进入 `InProgress`。传输状态更新后检查活动运行时。
+6. 收到回调后，去重并核对来源、回执、attempt、报告和实现。在隔离环境中审查精确改动并执行与风险相称的检查，用[验收模板](assets/acceptance-template.md)记录结论。保留失败或跳过的检查及残余风险。解锁依赖前通过集成门禁。
+7. 提交控制面变更，运行严格校验和视图检查。交接结果、证据、阻塞和下一步，不重复整份派发消息或报告。
+
+只执行当前适用的动作；继续已有 attempt 时，不重新创建任务卡、派发或岗位。本节是运行手册的导航，不替代其操作顺序或 Validator / CI 检查列表。
+
+## Worker 日常流程
+
+1. 通过 Writer 门禁，阅读分配的任务卡及上下文，核验 ID、冻结的锁/策略/模型快照、基线、worktree、路径和报告目标。锁与 `task_card_commit` 不一致或输入过期时，阻止执行。
+2. 在范围内实现并运行必需的可信检查。只有代码、失败检查或契约问题需要时才扩展上下文。不要把普通实现问题转成圆桌研讨或未声明的委派。
+3. 先提交实现和测试，再使用[交付报告模板](assets/delivery-report-template.md)，引用不可变实现、逐项验收证据、检查、偏差及执行模型快照，单独提交报告。保留必填字段和章节，正文简短，以证据引用代替重复日志。
+4. 通知前确保 PM 可读取两个提交。按运行时适配器的回调流程交叉核对委派来源和 PM 路由，发送规定 payload，并持久化匹配的 `callback_receipts[callback_id]`，其状态为 `status: received`。
+5. 传输失败时保留原回调身份和交付工件，使用对应的重试/恢复流程。不得仅为重发消息就重做实现或新建 attempt。没有回执时，报告“交付已持久化，通知尚未确认”，不能宣称通知生命周期完成。
+
+简短回调仍必须包含全部要求的标识符、提交、状态和请求 PM 执行的动作，但无需复制报告正文。提交审查后，审查对象保持冻结；PM 退回的工作按现有协议开启新 attempt。
+
+## 仅在需要时开展咨询
+
+Leader 无需其他视角就能可靠回答时，使用零席位，不创建咨询记录。用户明确要求独立或多会话视角时，仍需提供有意义的席位组合，并通过可见任务创建授权门禁。
+
+实际咨询遵守独立协议：一个议题、一到三个只读席位、独立第一轮、最多一轮交叉质询，不递归创建任务，核验身份和回调。咨询记录与回执独立于执行任务。派生决策或任务卡前需要 Owner 确认，但该确认不授权实现或发布。咨询席不使用执行任务的模型 selector，应遵守咨询模型要求和宿主工具规则。
+
+## 校验与恢复
+
+`<skill-dir>` 指包含本入口的锁定不可变包，而不是任意开发工作目录。
+
+- **只读校验：**运行 `scripts/check_compatibility.py --project <repo> --operation validate`，再运行 `scripts/validate_project.py --project <repo>`。阅读诊断信息；警告或旧状态可读不代表允许修复。
+- **日常控制面写入：**通过 Writer 门禁，渲染视图，运行 `validate_project.py --pre-commit` 和 `render_views.py --check`，审查并仅提交已授权范围，再运行带 `--require-clean` 的精确 Writer 门禁、严格 `validate_project.py` 和 `render_views.py --check`。普通操作不得使用迁移或旧证据放宽参数。初始化/接入应改用专门流程及其输出的提交后验证命令。
+- **Standard / Automated 闭环校验：**必须同时通过 `validate_runtime.py --project <repo> --check-active` 和 `validate_project.py --project <repo> --require-runtime`。二者都不能代替实时 provider 核验或运行手册第 15 节的语义检查。
+- **存在咨询记录：**还需运行 `validate_consultations.py --project <repo>`；创建可见席位后，使用 `--require-runtime` 并核验当前 provider 任务、标题和传输。
+- **恢复：**冻结派发，检查只读兼容性，保全证据，定位运行手册第 12 节的对应情形。修复前取得 Writer 权限和有效 PM 租约；对照 Git 与运行时证据核实事实、去重，再渲染、预检、提交、严格校验，并独立复验运行时，最后才恢复派发。
+
+保留所有必要检查和工件。脚本通过不能证明命令安全、范围合规、实际模型执行或消息送达。不要删除那些看似重复、实际保护不同阶段或不同事实的检查。
+
+等待时采用有界事件等待或适配器的重试流程，不要反复读取完整聊天或重载说明。对账无变化时保持安静。按 F05，PM 可以在修复丢失回调的同时审查持久化的不可变工件；这不代表缺失回执变成成功通知，也不代表运行时门禁通过。
+
+## 简明交接
+
+报告模式、结果、任务/attempt 身份、改动范围、分支/提交、命令及检查结果、偏差、阻塞和下一步。引用持久化报告，不重复全文。运行时工作应说明路由核验和回执 ID，不暴露运行时任务 ID 或秘密；咨询应说明席位/轮次、缺失回答、综合报告、确认情况和派生引用。
+
+初始化时披露未修改文件、`MANUAL_MERGE` 以及待执行的提交/校验。Worker 交付提供两个提交；PM 验收明确审查的提交及集成状态。不得为缩短总结而隐瞒未执行的检查或未解除的门禁。

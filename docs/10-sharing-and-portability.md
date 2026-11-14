@@ -16,23 +16,23 @@ LICENSE
 
 ## 当前公开版本与三种身份
 
-当前公开版本是 `v0.2.0-beta`，但 tag、源码清单和构建产物承担不同职责：
+当前公开版本是 `v0.2.1-beta`，但 tag、源码清单和构建产物承担不同职责：
 
 | 对象 | 身份 | 用途 |
 | --- | --- | --- |
-| Git tag `v0.2.0-beta` | 固定源码 commit | 审计和可重复构建输入 |
-| tag 内 `release-manifest.json` | `0.2.0-dev` / `development` | 阻止源码目录冒充正式 Writer |
-| 构建后的只读 bundle | `v0.2.0-beta` / `stable` + commit + digest | 可通过项目写门禁的正式 beta 制品 |
+| Git tag `v0.2.1-beta` | 固定源码 commit | 审计和可重复构建输入 |
+| tag 内 `release-manifest.json` | `0.2.1-dev` / `development` | 阻止源码目录冒充正式 Writer |
+| 构建后的只读 bundle | `v0.2.1-beta` / `stable` + commit + digest | 可通过项目写门禁的正式 beta 制品 |
 | `v0.1.0-beta` | `legacy-unpinned` 旧版 | 旧项目恢复与显式认领 |
 
 这里的 `stable` 表示制品已经封装、身份可验证并具备 Writer 资格，不表示协议已经
 脱离 beta。不要把移动的 `main` 当成安装版本。
 
 通用 Skill installer 只会复制 `skills/agentdesk` 源码，不运行发布构建器，也不会
-把目录封成只读。因此即使指定 `--ref v0.2.0-beta`，得到的也只是用于代码审阅、
+把目录封成只读。因此即使指定 `--ref v0.2.1-beta`，得到的也只是用于代码审阅、
 测试和只读影子校验的 development 安装，不能初始化正式项目或执行 Writer 操作。
 
-## 构建并激活 `v0.2.0-beta`
+## 构建并激活 `v0.2.1-beta`
 
 从固定 tag 本地构建可验证发布包。clone 后不要编辑文件；测试时禁止生成 bytecode，
 并确认 `git status --short` 没有输出：
@@ -41,7 +41,7 @@ LICENSE
 (
   set -eu
 
-  release_tag="v0.2.0-beta"
+  release_tag="v0.2.1-beta"
   repo_dir="AgentDeskSkill-$release_tag"
   release_dir="$HOME/.local/share/agentdesk/releases/$release_tag"
   codex_home="${CODEX_HOME:-$HOME/.codex}"

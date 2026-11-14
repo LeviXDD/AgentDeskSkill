@@ -22,22 +22,22 @@ residual_risks: []
 created_at: "<RFC3339 UTC>"
 ---
 
-# TC-XXX · Acceptance · Attempt N · Review N
+# TC-XXX · 验收记录 · 第 N 次执行 · 第 N 次审查
 
-## Decision
+## 结论
 
 accepted / returned / blocked
 
-## Scope Review
+## 范围审查
 
-- [ ] Diff is relative to the frozen base.
-- [ ] No unauthorized path changed.
-- [ ] Conflict surfaces and contracts were checked.
+- [ ] diff 相对于冻结基线计算。
+- [ ] 未修改任何未授权路径。
+- [ ] 已检查冲突面和契约。
 
-## Criteria And Checks
+## 验收标准与检查
 
-- [ ] `<criterion>`: `<PM evidence>`
+- [ ] `<验收标准>`：`<PM 复核证据>`
 
-## Rationale And Next Integration Step
+## 结论依据与下一步集成
 
-<Why this decision is justified and what baseline should receive the accepted change.>
+<说明该结论的依据，以及已验收改动应进入哪个基线。>

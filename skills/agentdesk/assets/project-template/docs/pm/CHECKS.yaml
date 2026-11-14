@@ -1,7 +1,7 @@
 schema_version: agentdesk.check-catalog/v1
 checks: {}
 
-# Add trusted checks as argv arrays. Example:
+# 使用 argv 数组添加可信检查。示例：
 # checks:
 #   project.test:
 #     argv: ["python3", "-m", "pytest"]
