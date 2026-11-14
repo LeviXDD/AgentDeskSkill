@@ -12,13 +12,13 @@
 
 ## 安装
 
-当前公开 beta 是 `v0.2.0-beta`。从固定 tag 构建并激活可验证只读发布包：
+当前公开 beta 是 `v0.2.1-beta`。从固定 tag 构建并激活可验证只读发布包：
 
 ```bash
 (
   set -eu
 
-  release_tag="v0.2.0-beta"
+  release_tag="v0.2.1-beta"
   repo_dir="AgentDeskSkill-$release_tag"
   release_dir="$HOME/.local/share/agentdesk/releases/$release_tag"
   codex_home="${CODEX_HOME:-$HOME/.codex}"
@@ -63,7 +63,7 @@
 )
 ```
 
-不要把通用 Skill installer 当成 `v0.2.0-beta` 的可写安装器：tag 中的源码清单
+不要把通用 Skill installer 当成 `v0.2.1-beta` 的可写安装器：tag 中的源码清单
 刻意保持 development 身份，复制后目录也仍可写，因此只能用于审阅、测试和只读
 影子校验。如果 `~/.codex/skills/agentdesk` 已经是 `v0.1.0-beta` 留下的普通目录，
 激活器会拒绝覆盖；先按[公开分享与平台兼容](10-sharing-and-portability.md#从-v010-beta-升级安装)

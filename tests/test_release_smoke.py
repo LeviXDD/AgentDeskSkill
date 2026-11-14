@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -76,7 +77,7 @@ class ReleaseSmokeTests(unittest.TestCase):
             self.assertTrue((REPO_ROOT / relative).is_file(), relative)
 
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn('release_tag="v0.2.0-beta"', readme)
+        self.assertIn('release_tag="v0.2.1-beta"', readme)
         self.assertIn("--branch \"$release_tag\"", readme)
         self.assertIn("--source skills/agentdesk", readme)
         self.assertIn("--release-id \"$release_tag\"", readme)
@@ -86,13 +87,13 @@ class ReleaseSmokeTests(unittest.TestCase):
             'test -z "$(git status --porcelain=v1 --untracked-files=all)"',
             readme,
         )
-        self.assertNotIn("--ref v0.2.0-beta", readme)
+        self.assertNotIn("--ref v0.2.1-beta", readme)
         self.assertIn("$agentdesk", readme)
 
         source_manifest = json.loads(
             (SKILL_ROOT / "release-manifest.json").read_text(encoding="utf-8")
         )
-        self.assertEqual("0.2.0-dev", source_manifest["skill_release"])
+        self.assertEqual("0.2.1-dev", source_manifest["skill_release"])
         self.assertEqual("development", source_manifest["release_status"])
         self.assertIsNone(source_manifest["source_commit"])
         self.assertIsNone(source_manifest["bundle_sha256"])
@@ -131,7 +132,7 @@ class ReleaseSmokeTests(unittest.TestCase):
             content = document.read_text(encoding="utf-8")
             for block in re.findall(r"```bash\n(.*?)```", content, re.DOTALL):
                 if (
-                    'release_tag="v0.2.0-beta"' in block
+                    'release_tag="v0.2.1-beta"' in block
                     or 'backup_path="$backup_root/agentdesk-legacy-backup"' in block
                 ):
                     selected_blocks.append((document, block))
@@ -167,6 +168,7 @@ class ReleaseSmokeTests(unittest.TestCase):
             "scripts/validate_project.py",
             "scripts/validate_runtime.py",
             "references/consultation-protocol.md",
+            "references/initialization-and-adoption.md",
             "references/versioning-and-upgrades.md",
             "assets/consultation-brief-template.md",
             "assets/consultation-record-template.yaml",
@@ -190,6 +192,39 @@ class ReleaseSmokeTests(unittest.TestCase):
             self.assertNotIn("__pycache__", path.parts)
             self.assertNotEqual(path.name, ".DS_Store")
             self.assertNotEqual(path.suffix, ".pyc")
+
+    def test_entrypoint_and_initialization_links_resolve_inside_bundle(self) -> None:
+        documents = (
+            SKILL_ROOT / "SKILL.md",
+            SKILL_ROOT / "references" / "initialization-and-adoption.md",
+        )
+        for document in documents:
+            content = document.read_text(encoding="utf-8")
+            links = re.findall(r"\[[^\]\n]+\]\(([^\s)]+)\)", content)
+            self.assertTrue(links, str(document))
+            for link in links:
+                with self.subTest(document=document.name, link=link):
+                    parsed = urlsplit(link)
+                    if parsed.scheme or parsed.netloc:
+                        continue
+                    target = (
+                        document.parent / unquote(parsed.path)
+                        if parsed.path
+                        else document
+                    ).resolve()
+                    self.assertIn(SKILL_ROOT.resolve(), target.parents)
+                    self.assertTrue(target.is_file(), str(target))
+                    if parsed.fragment:
+                        headings = re.findall(
+                            r"^#{1,6} (.+)$",
+                            target.read_text(encoding="utf-8"),
+                            re.MULTILINE,
+                        )
+                        anchors = {
+                            re.sub(r"[^\w -]", "", heading.lower()).replace(" ", "-")
+                            for heading in headings
+                        }
+                        self.assertIn(unquote(parsed.fragment), anchors)
 
     def test_public_snapshot_contains_no_obvious_private_material(self) -> None:
         mac_home = re.escape("/" + "Users" + "/")

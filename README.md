@@ -24,7 +24,7 @@ Standard requires Codex Desktop to expose task creation, naming, listing/reading
 - Git and a real repository root for durable workflow evidence.
 - A Codex environment that can load local Skills; Standard additionally requires Codex Desktop and the task operations described above.
 
-### Install `v0.2.0-beta`
+### Install `v0.2.1-beta`
 
 Build the current public beta from its fixed tag, then atomically activate the
 verified read-only bundle:
@@ -33,7 +33,7 @@ verified read-only bundle:
 (
   set -eu
 
-  release_tag="v0.2.0-beta"
+  release_tag="v0.2.1-beta"
   repo_dir="AgentDeskSkill-$release_tag"
   release_dir="$HOME/.local/share/agentdesk/releases/$release_tag"
   codex_home="${CODEX_HOME:-$HOME/.codex}"
@@ -110,7 +110,7 @@ Versioned task cards, logical role IDs, decisions, events, and acceptance eviden
 
 ### Beta status
 
-`v0.2.0-beta` is the current public beta; `v0.1.0-beta` remains the legacy
+`v0.2.1-beta` is the current public beta; `v0.1.0-beta` remains the legacy
 baseline. “Stable” in a built manifest means sealed and writer-eligible, not
 post-beta API stability. Protocols and schemas may change before `v1.0.0`;
 pin the tag, review generated diffs, and test on a non-critical repository
@@ -138,7 +138,7 @@ Standard 需要 Codex Desktop 能够创建、命名、列出/读取并跨任务�
 - Git，且目标路径应是真实的仓库根目录。
 - 能够加载本地 Skill 的 Codex 环境；Standard 还需要 Codex Desktop 及上述任务操作能力。
 
-### 安装 `v0.2.0-beta`
+### 安装 `v0.2.1-beta`
 
 从固定 tag 构建当前公开 beta，再原子激活经过校验的只读发布包：
 
@@ -146,7 +146,7 @@ Standard 需要 Codex Desktop 能够创建、命名、列出/读取并跨任务�
 (
   set -eu
 
-  release_tag="v0.2.0-beta"
+  release_tag="v0.2.1-beta"
   repo_dir="AgentDeskSkill-$release_tag"
   release_dir="$HOME/.local/share/agentdesk/releases/$release_tag"
   codex_home="${CODEX_HOME:-$HOME/.codex}"
@@ -221,7 +221,7 @@ tag 内的源码清单会刻意保持 development 身份。使用通用 Skill in
 
 ### Beta 说明
 
-`v0.2.0-beta` 是当前公开 beta，`v0.1.0-beta` 保留为旧版基线。构建清单中的
+`v0.2.1-beta` 是当前公开 beta，`v0.1.0-beta` 保留为旧版基线。构建清单中的
 Stable 表示制品已封装并具备通过写门禁的资格，不表示 API 已脱离 beta。
 `v1.0.0` 前协议和 schema 仍可能变化；请固定 tag、审查生成 diff，并先在非关键
 仓库中试用。

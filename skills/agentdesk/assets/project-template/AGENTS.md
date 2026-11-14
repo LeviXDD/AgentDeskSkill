@@ -1,50 +1,50 @@
 # AGENTS.md
 
-## Project
+## 项目
 
-- Project ID: `{{PROJECT_ID}}`
-- Adoption level: `{{MODE}}`
-- Purpose: `<fill before dispatching work>`
+- 项目 ID：`{{PROJECT_ID}}`
+- 接入级别：`{{MODE}}`
+- 目标：`<派发任务前填写>`
 
-## Repository Map
+## 仓库地图
 
-- `<path>`: `<responsibility>`
+- `<路径>`：`<职责>`
 
-## Commands
+## 命令
 
-- Build: `<trusted command or check ID>`
-- Test: `<trusted command or check ID>`
-- Typecheck: `<trusted command or check ID>`
-- Lint: `<trusted command or check ID>`
+- 构建：`<可信命令或检查 ID>`
+- 测试：`<可信命令或检查 ID>`
+- 类型检查：`<可信命令或检查 ID>`
+- 静态检查：`<可信命令或检查 ID>`
 
-## Iron Rules
+## 必须遵守的规则
 
-1. `docs/pm/state/tasks.yaml` is the authority for current execution-task orchestration state. Consultation records are separate and must never drive task transitions.
-2. Only the current logical PM lease holder changes execution control-plane state. A consultation Leader may update only that consultation's separate record and artifacts; consultation authority does not grant execution-state write access.
-3. PM/Leader and every active worker role use real, independently addressable sessions. A worktree, a logical role, or a prompt that says “act as” is not a role session.
-4. Never switch from PM/Leader to a worker role, or between worker roles, inside one session. If the platform cannot create, name, bind, address, and receive callbacks from an independent role session, stop before dispatch and ask the user for a supported path.
-5. Every role session title is exactly `role_no . role_name` from `docs/pm/ROLES.md`; auto-generated titles must be renamed and verified before dispatch.
-6. Workers change only task-authorized paths plus their exact `report_path`.
-7. A worker report is not a callback or acceptance; the worker must actively callback the PM route, and PM must review immutable commits.
-8. `Accepted` is not `Integrated`.
-9. Do not commit secrets, host/session/thread IDs, worktree absolute paths, transport receipts, or other runtime routing data. Keep them only in gitignored `.agentdesk/runtime/`.
-10. Role model policy is vendor-neutral; task and risk may raise its floor, never lower it.
-11. Model strength never grants authority or bypasses approval, capability, or safety gates.
-12. A consultation seat is a temporary read-only perspective, not an Active role, worker, task card, spike, QA result, or acceptance authority. Never add consultation seats to `ROLES.md` or `tasks.yaml`.
-13. One consultation may use one to three independently visible seats and at most two rounds. Round 1 is independent; seats never message one another or create more sessions. All prompts and proactive callbacks use the initiating Leader task as the hub.
-14. Creating consultation sessions requires an explicit batch authorization for the exact visible titles, or an explicitly delegated `scoped_auto` authorization bounded to the exact topic, seat/round limits, and read-only operation. General analysis, development, initialization, or Skill-upgrade approval does not authorize them.
-15. Consultation sessions are read-only and must not change files, commits, control-plane state, external systems, or credentials. Their model requirements are vendor-neutral and do not grant authority.
-16. A Leader synthesis is a proposal, not a vote or decision. Only the User / Owner may confirm an exact outcome scope before it is appended to `DECISIONS.md` or converted into a task card; that confirmation never implies execution-session creation, dispatch, acceptance, merge, release, or deployment authority.
+1. `docs/pm/state/tasks.yaml` 是当前执行任务编排状态的权威来源。咨询记录独立保存，不得驱动任务状态迁移。
+2. 只有当前逻辑 PM 租约持有人可修改执行控制面状态。咨询 Leader 只能更新该咨询的独立记录和工件；咨询权限不授予执行状态写入权。
+3. PM/Leader 和每个活动 Worker 岗位都使用真实、可独立寻址的会话。worktree、逻辑岗位或“扮演某角色”的提示词都不等于岗位会话。
+4. 不得在同一会话中从 PM/Leader 切换到 Worker，也不得在 Worker 岗位之间切换。平台无法创建、命名、绑定、寻址独立岗位会话或接收其回调时，派发前停止，并向用户询问受支持的路径。
+5. 每个岗位会话标题必须精确等于 `docs/pm/ROLES.md` 中的 `role_no . role_name`；自动生成的标题必须在派发前改名并核验。
+6. Worker 只修改任务授权路径和指定的 `report_path`。
+7. Worker 报告不是回调或验收；Worker 必须主动回调 PM 路由，PM 必须审查不可变提交。
+8. `Accepted` 不等于 `Integrated`。
+9. 不得提交秘密、主机/会话/线程 ID、worktree 绝对路径、传输回执或其他运行时路由数据；只保存在被 Git 忽略的 `.agentdesk/runtime/` 中。
+10. 岗位模型策略与厂商无关；任务和风险只能抬高其下限，不能降低。
+11. 更强的模型不授予权限，也不能绕过审批、能力或安全门禁。
+12. 咨询席是临时只读视角，不是 Active 岗位、Worker、任务卡、spike、QA 结果或验收主体。不得把咨询席加入 `ROLES.md` 或 `tasks.yaml`。
+13. 一次咨询可使用一到三个独立可见席位，最多两轮。第一轮独立作答；席位不得互相发消息或创建更多会话。所有提示和主动回调都以发起咨询的 Leader 任务为中心。
+14. 创建咨询会话需要针对精确可见标题的明确批量授权，或明确委托的 `scoped_auto` 授权；后者须限定精确议题、席位/轮次上限和只读操作。一般性的分析、开发、初始化或 Skill 升级批准不包含该授权。
+15. 咨询会话只读，不得修改文件、提交、控制面状态、外部系统或凭据。其模型要求与厂商无关，不授予权限。
+16. Leader 综合报告是建议，不是投票或决策。只有 User / Owner 可确认精确结论范围，之后才能追加到 `DECISIONS.md` 或转为任务卡；该确认不隐含执行会话创建、派发、验收、合并、发布或部署权限。
 
-## Task And Report Protocol
+## 任务与报告约定
 
-- Task cards: `docs/pm/tasks/TC-XXX-rN-*.md`
-- Reports: `docs/pm/reports/TC-XXX-rN-aN.md`
-- Acceptance: `docs/pm/acceptances/TC-XXX-rN-aN-reviewN.md`
-- Decisions: `docs/pm/DECISIONS.md`
-- Consultations: `docs/pm/consultations/CNNN/` (public logical evidence only; never runtime IDs)
-- Role model policy: `docs/pm/ROLE-POLICIES.yaml`
-- Logical role identity and expected titles: `docs/pm/ROLES.md`
-- Local routes and dispatch/callback receipts: `.agentdesk/runtime/` (gitignored; never copy runtime IDs into cards or reports)
+- 任务卡：`docs/pm/tasks/TC-XXX-rN-*.md`
+- 报告：`docs/pm/reports/TC-XXX-rN-aN.md`
+- 验收：`docs/pm/acceptances/TC-XXX-rN-aN-reviewN.md`
+- 决策：`docs/pm/DECISIONS.md`
+- 咨询：`docs/pm/consultations/CNNN/`，只放公开逻辑证据，不放运行时 ID
+- 岗位模型策略：`docs/pm/ROLE-POLICIES.yaml`
+- 逻辑岗位身份及预期标题：`docs/pm/ROLES.md`
+- 本地路由及派发/回调回执：`.agentdesk/runtime/`，由 Git 忽略，不得将运行时 ID 复制到任务卡或报告
 
-Read only the current card or consultation brief's required context by default. Use the `agentdesk` Skill for consultation, initialization, PM operation, execution, validation, integration, and recovery.
+默认只读取当前任务卡或咨询简报的必读上下文。咨询、初始化、PM 操作、执行、校验、集成和恢复均使用 `agentdesk` Skill。

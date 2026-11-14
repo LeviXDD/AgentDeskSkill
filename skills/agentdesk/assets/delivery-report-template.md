@@ -29,39 +29,39 @@ suggested_resume_state: null
 created_at: "<RFC3339 UTC>"
 ---
 
-# TC-XXX · Delivery Report · Attempt N
+# TC-XXX · 交付报告 · 第 N 次执行
 
-## Summary
+## 摘要
 
-- `<implemented>`
-- `<not implemented>`
+- `<已实现内容>`
+- `<未实现内容>`
 
-## Changed Files
+## 修改文件
 
-- `<path>`: `<reason>`
+- `<路径>`：`<原因>`
 
-## Acceptance Self-Check
+## 验收自检
 
-- [ ] `<criterion>`: `<evidence>`
+- [ ] `<验收标准>`：`<证据>`
 
-## Checks
+## 检查结果
 
 | check_id | result | evidence |
 | --- | --- | --- |
-| `<id>` | passed / failed / not_run | `<summary>` |
+| `<id>` | passed / failed / not_run | `<摘要>` |
 
-## Callback Handoff
+## 回调交接
 
-- Destination role: `PM` (resolve through the verified runtime route; do not put its thread ID here)
-- Callback ID: use the immutable `callback_id` from frontmatter for the first send and every retry
-- Payload: echo task, revision, attempt, dispatch, implementation/report commits, report path, status, and requested PM action
-- Completion condition: a successful callback receipt exists in gitignored `.agentdesk/runtime/transport-receipts.yaml`
-- On transport failure: preserve this report and callback ID, surface the failure, and leave the same callback retryable; do not claim that PM was notified
+- 目标岗位：`PM`，通过已核验的运行时路由解析，不在此处填写线程 ID
+- 回调 ID：首次发送及每次重试均使用 frontmatter 中不可变的 `callback_id`
+- Payload：原样携带任务、revision、attempt、dispatch、实现/报告提交、报告路径、状态及请求 PM 执行的动作
+- 完成条件：被 Git 忽略的 `.agentdesk/runtime/transport-receipts.yaml` 中存在成功回调回执
+- 传输失败时：保留本报告和回调 ID，明确报告失败，并使原回调保持可重试；不得宣称 PM 已收到通知
 
-## Deviations, Contract Changes, And Risks
+## 偏差、契约变化与风险
 
-- None
+- 无
 
-## Follow-Ups
+## 后续事项
 
-- None
+- 无

@@ -30,45 +30,45 @@ callback_required: true
 created_at: "<RFC3339 UTC>"
 ---
 
-# TC-XXX · <Observable outcome>
+# TC-XXX · <可观察的结果>
 
-## Goal
+## 目标
 
-<One concrete result.>
+<一个具体结果。>
 
-## Context Budget
+## 上下文预算
 
-Required:
+必读：
 - `AGENTS.md`
-- This task card
-- `<minimal source or contract>`
+- 当前任务卡
+- `<必要的源码或契约>`
 
-Read if needed:
-- `<nearby material for uncertainty>`
+按需读取：
+- `<用于澄清不确定性的相关材料>`
 
-Do not read by default:
-- Full historical reports
-- Unrelated modules
-- Full project archive
+默认不读取：
+- 完整历史报告
+- 无关模块
+- 全部项目归档
 
-## Scope
+## 范围
 
-Allowed:
-- `<behavior or module>`
+允许：
+- `<行为或模块>`
 
-Forbidden:
-- `<contract, behavior, or directory>`
+禁止：
+- `<契约、行为或目录>`
 
-## Acceptance Criteria
+## 验收标准
 
-- [ ] `<observable behavior and evidence>`
-- [ ] `<failure or boundary case>`
-- [ ] All required checks have reviewable evidence
+- [ ] `<可观察的行为及证据>`
+- [ ] `<失败或边界情形>`
+- [ ] 所有必需检查均有可审查证据
 
-## Delivery
+## 交付
 
-Use the dispatch-provided branch, attempt, IDs, base commit, and exact report path. Commit implementation first, then the report. A completed report requests PM review; it is not a callback or acceptance.
+使用派发指定的分支、attempt、ID、基线提交和精确报告路径。先提交实现，再提交报告。完成报告仅请求 PM 审查，不等于回调或验收。
 
-After the report commit exists, actively send one completion/blocked callback to logical role `callback_destination_role_id` through its verified runtime route. Reuse the same `callback_id` for every transport retry and require a successful runtime receipt before declaring the handoff complete. If callback delivery fails, preserve the report and callback ID, surface the transport failure, and leave the callback retryable.
+报告提交存在后，通过已核验的运行时路由，主动向逻辑岗位 `callback_destination_role_id` 发送一次完成/阻塞回调。每次传输重试复用同一 `callback_id`；取得成功运行时回执后才能宣称交接完成。回调失败时，保留报告和回调 ID，明确报告传输失败，并使原回调保持可重试。
 
-Never place a host ID, session/thread ID, absolute worktree path, provider receipt, retry timer, credential, or other runtime routing value in this card or the report. Those values belong only in gitignored `.agentdesk/runtime/`.
+不得在任务卡或报告中写入主机 ID、会话/线程 ID、worktree 绝对路径、provider 回执、重试计时器、凭据或其他运行时路由值。这些信息只放在被 Git 忽略的 `.agentdesk/runtime/` 中。
